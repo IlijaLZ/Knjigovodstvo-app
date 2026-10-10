@@ -227,7 +227,7 @@ class _KalkulacijaNabavnihCijenaScreenState
                                 children: [
                                   // Pregled
                                   IconButton(
-                                    tooltip: 'Analiticka kartica',
+                                    tooltip: 'Pregled',
                                     onPressed: () {
                                       Route route = MaterialPageRoute(
                                         builder: (context) =>
