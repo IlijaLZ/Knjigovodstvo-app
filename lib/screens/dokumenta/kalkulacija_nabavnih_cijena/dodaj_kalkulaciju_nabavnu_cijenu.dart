@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:knjigovodstvo_app/widgets/input_widget.dart';
 
 class DodajKalkulacijuScreen extends StatefulWidget {
   const DodajKalkulacijuScreen({super.key});
@@ -10,7 +11,9 @@ class DodajKalkulacijuScreen extends StatefulWidget {
 
 class _DodajKalkulacijuScreenState extends State<DodajKalkulacijuScreen> {
   final rbController = TextEditingController();
-  final datumController = TextEditingController();
+  final datumController = TextEditingController(
+    text: DateTime.now().toString().split(' ')[0],
+  ); // yyyy-mm-dd
   final dobavljacController = TextEditingController();
   final rcBrController = TextEditingController();
   final prijemnicaBrController = TextEditingController();
@@ -21,6 +24,7 @@ class _DodajKalkulacijuScreenState extends State<DodajKalkulacijuScreen> {
   final svegaController = TextEditingController();
   final fvController = TextEditingController();
   final ztnController = TextEditingController();
+  final carinaController = TextEditingController();
 
   final searchController = TextEditingController();
 
@@ -104,55 +108,12 @@ class _DodajKalkulacijuScreenState extends State<DodajKalkulacijuScreen> {
     searchController.dispose();
     prevozController.dispose();
     spedicionController.dispose();
+    carinaController.dispose();
     svegaController.dispose();
     fvController.dispose();
     ztnController.dispose();
 
     super.dispose();
-  }
-
-  // Ako je width == null, input se rasteže (koristi se unutar Expanded).
-  // readOnly = true -> polje samo za prikaz (sivo, bez fokusa).
-  Widget _buildInput({
-    required String label,
-    required TextEditingController controller,
-    double? width = 320,
-    bool readOnly = false,
-    ValueChanged<String>? onChanged,
-  }) {
-    final field = TextField(
-      controller: controller,
-      readOnly: readOnly,
-      onChanged: onChanged,
-      style: readOnly ? const TextStyle(fontWeight: FontWeight.w600) : null,
-      decoration: InputDecoration(
-        labelText: label,
-        filled: true,
-        fillColor: readOnly ? Colors.grey.shade200 : Colors.grey.shade50,
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: 16,
-        ),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-          borderSide: BorderSide(color: Colors.grey.shade300),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-          borderSide: BorderSide(color: Colors.grey.shade300),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-          borderSide: readOnly
-              ? BorderSide(color: Colors.grey.shade300)
-              : const BorderSide(color: Colors.blue, width: 2),
-        ),
-      ),
-    );
-
-    if (width == null) return field;
-
-    return SizedBox(width: width, child: field);
   }
 
   void _obrisiArtikal(Map<String, String> artikal) {
@@ -201,9 +162,10 @@ class _DodajKalkulacijuScreenState extends State<DodajKalkulacijuScreen> {
   void _izracunajRekapitulaciju() {
     final prevoz = _parseNumber(prevozController.text);
     final spedicija = _parseNumber(spedicionController.text);
+    final carina = _parseNumber(carinaController.text);
     final fv = _parseNumber(fvController.text);
 
-    final svega = prevoz + spedicija;
+    final svega = prevoz + spedicija; //+ carina;
     svegaController.text = _formatNumber(svega);
     if (fv > 0) {
       final ztn = (svega / fv) * 100;
@@ -224,7 +186,6 @@ class _DodajKalkulacijuScreenState extends State<DodajKalkulacijuScreen> {
   }
 
   Future<void> _dodajNoviArtikal() async {
-    // Sljedeći redni broj = najveći postojeći + 1
     final sljedeciRb =
         artikli
             .map((a) => int.tryParse(a['artikla'] ?? '') ?? 0)
@@ -293,16 +254,7 @@ class _DodajKalkulacijuScreenState extends State<DodajKalkulacijuScreen> {
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 Expanded(
-                  child: _buildInput(
-                    label: 'RB',
-                    controller: rbController,
-                    width: null,
-                  ),
-                ),
-                const SizedBox(width: 16),
-
-                Expanded(
-                  child: _buildInput(
+                  child: buildInput(
                     label: 'Datum',
                     controller: datumController,
                     width: null,
@@ -311,7 +263,7 @@ class _DodajKalkulacijuScreenState extends State<DodajKalkulacijuScreen> {
                 const SizedBox(width: 16),
 
                 Expanded(
-                  child: _buildInput(
+                  child: buildInput(
                     label: 'Dobavljač',
                     controller: dobavljacController,
                     width: null,
@@ -320,7 +272,7 @@ class _DodajKalkulacijuScreenState extends State<DodajKalkulacijuScreen> {
                 const SizedBox(width: 16),
 
                 Expanded(
-                  child: _buildInput(
+                  child: buildInput(
                     label: 'RC.BR',
                     controller: rcBrController,
                     width: null,
@@ -329,7 +281,7 @@ class _DodajKalkulacijuScreenState extends State<DodajKalkulacijuScreen> {
                 const SizedBox(width: 16),
 
                 Expanded(
-                  child: _buildInput(
+                  child: buildInput(
                     label: 'Prijemnica br',
                     controller: prijemnicaBrController,
                     width: null,
@@ -683,7 +635,7 @@ class _DodajKalkulacijuScreenState extends State<DodajKalkulacijuScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // Prevoz
-                  _buildInput(
+                  buildInput(
                     label: 'Prevoz',
                     controller: prevozController,
                     onChanged: (_) => _izracunajRekapitulaciju(),
@@ -692,7 +644,7 @@ class _DodajKalkulacijuScreenState extends State<DodajKalkulacijuScreen> {
                   const SizedBox(height: 12),
 
                   // Špedicija
-                  _buildInput(
+                  buildInput(
                     label: 'Špedicija',
                     controller: spedicionController,
                     onChanged: (_) => _izracunajRekapitulaciju(),
@@ -701,16 +653,22 @@ class _DodajKalkulacijuScreenState extends State<DodajKalkulacijuScreen> {
                   const SizedBox(height: 12),
 
                   // Svega = Prevoz + Špedicija (samo prikaz)
-                  _buildInput(
+                  buildInput(
                     label: 'Svega (Prevoz + Špedicija)',
                     controller: svegaController,
                     readOnly: true,
                   ),
 
                   const SizedBox(height: 12),
+                  buildInput(
+                    label: 'Carina',
+                    controller: carinaController,
+                    onChanged: (_) => _izracunajRekapitulaciju(),
+                  ),
+                  const SizedBox(height: 12),
 
                   // FV
-                  _buildInput(
+                  buildInput(
                     label: 'FV',
                     controller: fvController,
                     onChanged: (_) => _izracunajRekapitulaciju(),
@@ -719,7 +677,7 @@ class _DodajKalkulacijuScreenState extends State<DodajKalkulacijuScreen> {
                   const SizedBox(height: 12),
 
                   // ZTN = Svega / FV (samo prikaz)
-                  _buildInput(
+                  buildInput(
                     label: 'ZTN (Svega / FV)',
                     controller: ztnController,
                     readOnly: true,
@@ -738,12 +696,12 @@ class _DodajKalkulacijuScreenState extends State<DodajKalkulacijuScreen> {
               runSpacing: 16,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                _buildInput(
+                buildInput(
                   label: 'Kalkulisao',
                   controller: kalkulisaoController,
                 ),
 
-                _buildInput(
+                buildInput(
                   label: 'Robu primio',
                   controller: robuPrimioController,
                 ),

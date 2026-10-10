@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:knjigovodstvo_app/screens/dokumenta/kalkulacija_nabavnih_cijena/dodaj_kalkulaciju_nabavnu_cijenu.dart';
+import 'package:knjigovodstvo_app/screens/analiticka_kartica.dart';
 
 class KalkulacijaNabavnihCijenaScreen extends StatefulWidget {
   const KalkulacijaNabavnihCijenaScreen({super.key});
@@ -226,8 +227,14 @@ class _KalkulacijaNabavnihCijenaScreenState
                                 children: [
                                   // Pregled
                                   IconButton(
-                                    tooltip: 'Pregled',
-                                    onPressed: () {},
+                                    tooltip: 'Analiticka kartica',
+                                    onPressed: () {
+                                      Route route = MaterialPageRoute(
+                                        builder: (context) =>
+                                            const AnalitickaKarticaScreen(),
+                                      );
+                                      Navigator.push(context, route);
+                                    },
                                     icon: const Icon(Icons.visibility_outlined),
                                   ),
 

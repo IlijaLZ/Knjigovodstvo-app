@@ -34,7 +34,7 @@ class MainScreen extends StatelessWidget {
 
     const KalkulacijaNabavnihCijenaScreen(),
     const RadniNalogScreen(),
-    const TrebovanjeScreen(),
+    TrebovanjeScreen(),
     const KalkulacijaCijeneKostanjaScreen(),
     const OtpremnicaScreen(),
 
