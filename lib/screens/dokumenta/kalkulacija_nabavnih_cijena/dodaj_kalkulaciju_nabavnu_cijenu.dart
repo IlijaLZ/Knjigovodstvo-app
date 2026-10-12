@@ -13,7 +13,7 @@ class _DodajKalkulacijuScreenState extends State<DodajKalkulacijuScreen> {
   final rbController = TextEditingController();
   final datumController = TextEditingController(
     text: DateTime.now().toString().split(' ')[0],
-  ); // yyyy-mm-dd
+  );
   final dobavljacController = TextEditingController();
   final rcBrController = TextEditingController();
   final prijemnicaBrController = TextEditingController();

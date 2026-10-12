@@ -7,7 +7,7 @@ import 'osnovni_podaci/objekti_screen.dart';
 import 'osnovni_podaci/artikli_screen.dart';
 
 import 'dokumenta/kalkulacija_nabavnih_cijena/kalkulacija_nabavnih_cijena_screen.dart';
-import 'dokumenta/radni_nalog_screen.dart';
+import 'dokumenta/radni_nalog/radni_nalog_screen.dart';
 import 'dokumenta/trebovanje_screen.dart';
 import 'dokumenta/kalkulacija_cijene_kostanja_screen.dart';
 import 'dokumenta/otpremnica_screen.dart';
