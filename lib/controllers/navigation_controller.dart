@@ -50,4 +50,16 @@ class NavigationController extends GetxController {
   void openStanjeMagacina() {
     selectedIndex.value = 12;
   }
+
+  void openMagacinRepromaterijala() {
+    selectedIndex.value = 13;
+  }
+
+  void openProizvodnjaUToku() {
+    selectedIndex.value = 14;
+  }
+
+  void openMagacinGotovihProizvoda() {
+    selectedIndex.value = 15;
+  }
 }

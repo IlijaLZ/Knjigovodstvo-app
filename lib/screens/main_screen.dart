@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:knjigovodstvo_app/screens/osnovni_podaci/objekti/magacin_gotovih_proizvoda.dart';
+import 'package:knjigovodstvo_app/screens/osnovni_podaci/objekti/magacin_repro.dart';
+import 'package:knjigovodstvo_app/screens/osnovni_podaci/objekti/proizvodnja_utoku.dart';
 
 import '../controllers/navigation_controller.dart';
 import 'osnovni_podaci/o_firmi_screen.dart';
-import 'osnovni_podaci/objekti_screen.dart';
+import 'osnovni_podaci/objekti/objekti_screen.dart';
 import 'osnovni_podaci/artikli_screen.dart';
 
 import 'dokumenta/kalkulacija_nabavnih_cijena/kalkulacija_nabavnih_cijena_screen.dart';
@@ -42,6 +45,10 @@ class MainScreen extends StatelessWidget {
     const GlavnaKnjigaScreen(),
     const KarticaGlavneKnjigeScreen(),
     const StanjeMagacinaScreen(),
+
+    const MagacinRepromaterijala(),
+    const ProizvodnjaUToku(),
+    const MagacinGotovihProizvoda(),
   ];
 
   @override
@@ -61,14 +68,7 @@ class MainScreen extends StatelessWidget {
             ),
             child: Row(
               children: [
-                _buildDropdown(
-                  title: 'Osnovni podaci',
-                  items: [
-                    _MenuItem(title: 'O firmi', onTap: controller.openOFirmi),
-                    _MenuItem(title: 'Objekti', onTap: controller.openObjekti),
-                    _MenuItem(title: 'Artikli', onTap: controller.openArtikli),
-                  ],
-                ),
+                _buildOsnovniPodaciMenu(controller),
 
                 _buildDropdown(
                   title: 'Dokumenta',
@@ -250,6 +250,67 @@ class _MenuItem {
   final VoidCallback onTap;
 
   _MenuItem({required this.title, required this.onTap});
+}
+
+Widget _buildOsnovniPodaciMenu(NavigationController controller) {
+  return MenuAnchor(
+    menuChildren: [
+      MenuItemButton(
+        onPressed: controller.openOFirmi,
+        child: const Text('O firmi'),
+      ),
+
+      SubmenuButton(
+        menuChildren: [
+          MenuItemButton(
+            onPressed: controller.openMagacinRepromaterijala,
+            child: const Text('Magacin repromaterijala'),
+          ),
+          MenuItemButton(
+            onPressed: controller.openProizvodnjaUToku,
+            child: const Text('Proizvodnja u toku'),
+          ),
+          MenuItemButton(
+            onPressed: controller.openMagacinGotovihProizvoda,
+            child: const Text('Magacin gotovih proizvoda'),
+          ),
+        ],
+        child: const Text('Objekti'),
+      ),
+
+      MenuItemButton(
+        onPressed: controller.openArtikli,
+        child: const Text('Artikli'),
+      ),
+    ],
+    builder: (context, menuController, child) {
+      return InkWell(
+        onTap: () {
+          if (menuController.isOpen) {
+            menuController.close();
+          } else {
+            menuController.open();
+          }
+        },
+        child: Container(
+          height: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          alignment: Alignment.center,
+          child: const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Osnovni podaci',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+              ),
+              SizedBox(width: 4),
+              Icon(Icons.keyboard_arrow_down, size: 18),
+            ],
+          ),
+        ),
+      );
+    },
+  );
 }
 
 // ======================================================================
