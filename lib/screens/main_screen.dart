@@ -102,17 +102,17 @@ class MainScreen extends StatelessWidget {
                 ),
 
                 _buildNavigationItem(
-                  'Glavna knjiga',
-                  controller.openGlavnaKnjiga,
-                ),
-
-                _buildNavigationItem(
-                  'Kartica glavne knjige',
+                  'Stanje magacina repromaterijala',
                   controller.openKarticaGlavneKnjige,
                 ),
 
                 _buildNavigationItem(
-                  'Stanje magacina',
+                  'Stanje magacina proizvodnje u toku',
+                  controller.openStanjeMagacina,
+                ),
+
+                _buildNavigationItem(
+                  'Stanje magacina gotovih proizvoda',
                   controller.openStanjeMagacina,
                 ),
 
@@ -280,7 +280,17 @@ Widget _buildOsnovniPodaciMenu(NavigationController controller) {
 
       MenuItemButton(
         onPressed: controller.openArtikli,
-        child: const Text('Artikli'),
+        child: const Text('Artikli repromaterijala'),
+      ),
+
+      MenuItemButton(
+        onPressed: controller.openArtikli,
+        child: const Text('Artikli gotovih proizvoda'),
+      ),
+
+      MenuItemButton(
+        onPressed: controller.openOFirmi,
+        child: const Text('Glavna knjiga'),
       ),
     ],
     builder: (context, menuController, child) {

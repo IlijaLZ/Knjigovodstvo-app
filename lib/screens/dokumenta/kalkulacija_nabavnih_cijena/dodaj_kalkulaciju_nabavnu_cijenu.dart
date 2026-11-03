@@ -38,50 +38,7 @@ class _DodajKalkulacijuScreenState extends State<DodajKalkulacijuScreen> {
   String? _objekat;
   // Demo artikli
   final List<Map<String, String>> artikli = [
-    {
-      'artikla': '1',
-      'sifra': 'ART-001',
-      'naziv': 'Brašno tip 500',
-      'dokument': 'PR-001',
-      'jm': 'kg',
-      'kolicina': '50',
-      'fakturna': '0,85 €',
-      'zavisni': '0,05 €',
-      'nabavna': '0,90 €',
-    },
-    {
-      'artikla': '2',
-      'sifra': 'ART-002',
-      'naziv': 'Šećer',
-      'dokument': 'PR-001',
-      'jm': 'kg',
-      'kolicina': '30',
-      'fakturna': '1,10 €',
-      'zavisni': '0,07 €',
-      'nabavna': '1,17 €',
-    },
-    {
-      'artikla': '3',
-      'sifra': 'ART-003',
-      'naziv': 'Ulje suncokretovo',
-      'dokument': 'PR-001',
-      'jm': 'l',
-      'kolicina': '20',
-      'fakturna': '1,45 €',
-      'zavisni': '0,10 €',
-      'nabavna': '1,55 €',
-    },
-    {
-      'artikla': '4',
-      'sifra': 'ART-004',
-      'naziv': 'So',
-      'dokument': 'PR-001',
-      'jm': 'kg',
-      'kolicina': '15',
-      'fakturna': '0,50 €',
-      'zavisni': '0,03 €',
-      'nabavna': '0,53 €',
-    },
+
   ];
 
   @override

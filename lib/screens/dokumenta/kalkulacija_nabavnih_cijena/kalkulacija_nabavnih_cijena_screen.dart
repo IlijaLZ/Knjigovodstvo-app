@@ -17,78 +17,7 @@ class _KalkulacijaNabavnihCijenaScreenState
   final int totalPages = 3;
 
   final List<Map<String, String>> dokumenti = [
-    {
-      'rb': '1',
-      'datum': '23.09.2026',
-      'dobavljac': 'Firma d.o.o.',
-      'rcBr': 'RC-001',
-      'prijemnicaBr': 'PR-001',
-      'kalkulisao': 'Petar Petrović',
-      'robuPrimio': 'Marko Marković',
-    },
-    {
-      'rb': '2',
-      'datum': '22.09.2026',
-      'dobavljac': 'Komerc Trade',
-      'rcBr': 'RC-002',
-      'prijemnicaBr': 'PR-002',
-      'kalkulisao': 'Petar Petrović',
-      'robuPrimio': 'Nikola Nikolić',
-    },
-    {
-      'rb': '3',
-      'datum': '20.09.2026',
-      'dobavljac': 'Montenegro Commerce',
-      'rcBr': 'RC-003',
-      'prijemnicaBr': 'PR-003',
-      'kalkulisao': 'Jovan Jovanović',
-      'robuPrimio': 'Marko Marković',
-    },
-    {
-      'rb': '4',
-      'datum': '18.09.2026',
-      'dobavljac': 'Balkan Trade',
-      'rcBr': 'RC-004',
-      'prijemnicaBr': 'PR-004',
-      'kalkulisao': 'Petar Petrović',
-      'robuPrimio': 'Nikola Nikolić',
-    },
-    {
-      'rb': '5',
-      'datum': '15.09.2026',
-      'dobavljac': 'Adria Market',
-      'rcBr': 'RC-005',
-      'prijemnicaBr': 'PR-005',
-      'kalkulisao': 'Jovan Jovanović',
-      'robuPrimio': 'Marko Marković',
-    },
-    {
-      'rb': '6',
-      'datum': '12.09.2026',
-      'dobavljac': 'Euro Commerce',
-      'rcBr': 'RC-006',
-      'prijemnicaBr': 'PR-006',
-      'kalkulisao': 'Petar Petrović',
-      'robuPrimio': 'Nikola Nikolić',
-    },
-    {
-      'rb': '7',
-      'datum': '10.09.2026',
-      'dobavljac': 'Primorje Trade',
-      'rcBr': 'RC-007',
-      'prijemnicaBr': 'PR-007',
-      'kalkulisao': 'Jovan Jovanović',
-      'robuPrimio': 'Marko Marković',
-    },
-    {
-      'rb': '8',
-      'datum': '08.09.2026',
-      'dobavljac': 'Market Plus',
-      'rcBr': 'RC-008',
-      'prijemnicaBr': 'PR-008',
-      'kalkulisao': 'Petar Petrović',
-      'robuPrimio': 'Nikola Nikolić',
-    },
+    
   ];
 
   @override
