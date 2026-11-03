@@ -86,8 +86,8 @@ class ArticlesService {
   }
 
   // POST /companies/{company}/articles
-  // Gotov proizvod se kreira zajedno sa normativom (material_id + quantity);
-  // naziv, JM i cijenu stavke server preuzima sa repromaterijala.
+  // Gotov proizvod se kreira zajedno sa normativom (naziv, cijena, količina
+  // i JM svake stavke).
   Future<Artikal> createArticle(
     int companyId, {
     required String type,
@@ -160,13 +160,22 @@ class ArticlesService {
   Future<Normativ> addBomItem(
     int companyId,
     int articleId, {
-    required int materialId,
+    required String name,
+    required double price,
     required double quantity,
+    required String unitOfMeasure,
   }) async {
-    final body = await _client.post(_normativi(companyId, articleId), {
-      'material_id': materialId,
-      'quantity': quantity,
-    });
+    final body = await _client.post(
+      _normativi(companyId, articleId),
+      _stavka(
+        Normativ(
+          naziv: name,
+          cijena: price,
+          kolicina: quantity,
+          jm: unitOfMeasure,
+        ),
+      ),
+    );
     return _normativIz(body);
   }
 
@@ -175,13 +184,18 @@ class ArticlesService {
     int companyId,
     int articleId,
     int bomItemId, {
-    int? materialId,
+    String? name,
+    double? price,
     double? quantity,
+    String? unitOfMeasure,
   }) async {
-    final body = await _client.patch(
-      '${_normativi(companyId, articleId)}/$bomItemId',
-      {'material_id': ?materialId, 'quantity': ?quantity},
-    );
+    final body = await _client
+        .patch('${_normativi(companyId, articleId)}/$bomItemId', {
+          'name': ?name,
+          'price': ?price,
+          'quantity': ?quantity,
+          if (unitOfMeasure != null) 'unit_of_measure': jmZaApi(unitOfMeasure),
+        });
     return _normativIz(body);
   }
 
@@ -209,9 +223,12 @@ class ArticlesService {
   String _normativi(int companyId, int articleId) =>
       '${_artikal(companyId, articleId)}/bom-items';
 
+  // Stavka normativa se unosi ručno: naziv, cijena, količina i JM.
   Map<String, dynamic> _stavka(Normativ n) => {
-    'material_id': n.materialId,
+    'name': n.naziv,
+    'price': n.cijena,
     'quantity': n.kolicina,
+    'unit_of_measure': jmZaApi(n.jm),
   };
 
   Artikal _artikalIz(Map<String, dynamic> body) =>
