@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:knjigovodstvo_app/screens/osnovni_podaci/artikli_screen.dart';
+import 'package:knjigovodstvo_app/models/article.dart';
 
 String _format(double value) {
   return value.toStringAsFixed(2).replaceAll('.', ',');

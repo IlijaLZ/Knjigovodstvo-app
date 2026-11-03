@@ -11,7 +11,7 @@ class NavigationController extends GetxController {
     selectedIndex.value = 2;
   }
 
-  void openArtikli() {
+  void openArtikliRepromaterijala() {
     selectedIndex.value = 3;
   }
 
@@ -61,5 +61,9 @@ class NavigationController extends GetxController {
 
   void openMagacinGotovihProizvoda() {
     selectedIndex.value = 15;
+  }
+
+  void openArtikliGotovihProizvoda() {
+    selectedIndex.value = 16;
   }
 }

@@ -1,7 +1,16 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:get/get.dart';
 
-const List<String> _jediniceMjere = ['kg', 'g', 'l', 'ml', 'kom', 'm', 'pak'];
+import '../../controllers/firma_controller.dart';
+import '../../models/article.dart';
+import '../../models/auth_models.dart';
+import '../../services/articles_service.dart';
+
+// Jedinice mjere iz šifarnika API-ja, prikazane kao u aplikaciji (kom, pak).
+final List<String> _jediniceMjere = jediniceMjereApi.map(jmIzApi).toList();
 
 double _parse(String text) {
   return double.tryParse(text.trim().replaceAll(',', '.')) ?? 0;
@@ -9,6 +18,31 @@ double _parse(String text) {
 
 String _format(double value) {
   return value.toStringAsFixed(2).replaceAll('.', ',');
+}
+
+String _formatKolicina(double value) {
+  return value.toString().replaceAll('.', ',');
+}
+
+String? _validirajObavezno(String? value) {
+  if (value == null || value.trim().isEmpty) return 'Obavezno polje';
+  return null;
+}
+
+String? _validirajKolicinu(String? value) {
+  if (value == null || value.trim().isEmpty) return 'Obavezno polje';
+  final broj = double.tryParse(value.trim().replaceAll(',', '.'));
+  if (broj == null) return 'Unesite ispravan broj';
+  if (broj <= 0) return 'Mora biti veće od 0';
+  return null;
+}
+
+final _decimalFormatter = FilteringTextInputFormatter.allow(RegExp(r'[0-9,.]'));
+
+void _poruka(BuildContext context, String tekst, {SnackBarAction? action}) {
+  ScaffoldMessenger.of(context)
+    ..hideCurrentSnackBar()
+    ..showSnackBar(SnackBar(content: Text(tekst), action: action));
 }
 
 InputDecoration _decoration(String label, {String? suffixText}) {
@@ -33,42 +67,12 @@ InputDecoration _decoration(String label, {String? suffixText}) {
   );
 }
 
-// Jedan red normativa: koliko čega (sirovine) ulazi u artikal.
-class Normativ {
-  final String naziv;
-  final double cijena;
-  final double kolicina;
-  final String jm;
-
-  const Normativ({
-    required this.naziv,
-    required this.cijena,
-    required this.kolicina,
-    required this.jm,
-  });
-
-  double get iznos => cijena * kolicina;
-}
-
-class Artikal {
-  final String sifra;
-  final String naziv;
-  final String jm;
-  final List<Normativ> normativi;
-
-  const Artikal({
-    required this.sifra,
-    required this.naziv,
-    required this.jm,
-    required this.normativi,
-  });
-
-  double get cijenaNormativa =>
-      normativi.fold<double>(0, (suma, n) => suma + n.iznos);
-}
-
+// Lista artikala izabrane firme jednog tipa (repromaterijal ili gotov
+// proizvod), sa API-ja: GET /companies/{company}/articles?type=...
 class ArtikliScreen extends StatefulWidget {
-  const ArtikliScreen({super.key});
+  final String tip;
+
+  const ArtikliScreen({super.key, required this.tip});
 
   @override
   State<ArtikliScreen> createState() => _ArtikliScreenState();
@@ -77,69 +81,184 @@ class ArtikliScreen extends StatefulWidget {
 class _ArtikliScreenState extends State<ArtikliScreen> {
   final searchController = TextEditingController();
 
-  // Demo artikli
-  final List<Artikal> artikli = [
-    const Artikal(
-      sifra: 'GP-001',
-      naziv: 'Hljeb bijeli 500g',
-      jm: 'kom',
-      normativi: [
-        Normativ(naziv: 'Brašno tip 500', cijena: 0.90, kolicina: 0.35, jm: 'kg'),
-        Normativ(naziv: 'Kvasac svježi', cijena: 4.50, kolicina: 0.01, jm: 'kg'),
-        Normativ(naziv: 'So', cijena: 0.53, kolicina: 0.007, jm: 'kg'),
-      ],
-    ),
-  ];
+  final FirmaController _firmaController = Get.find<FirmaController>();
+  final ArticlesService _service = ArticlesService();
+  late final Worker _firmaWorker;
+
+  List<Artikal> artikli = [];
+  bool _ucitavanje = false;
+  String? _greska;
+
+  // Paginacija sa servera (meta iz odgovora); veličinu stranice zadaje server.
+  int _stranica = 1;
+  int _poStranici = 0;
+  int _zadnjaStranica = 1;
+  int _ukupno = 0;
+  int? _od;
+  int? _do;
+
+  // Pretraga se šalje serveru tek kad korisnik prestane kucati.
+  Timer? _pretragaTimer;
+  String _pretraga = '';
+
+  // Broj zadnjeg zahtjeva; stariji odgovori se ignorišu.
+  int _zahtjev = 0;
+
+  // Prikaz obrisanih artikala (trashed=only), da bi se mogli vratiti.
+  bool _obrisani = false;
+
+  bool get _gotovProizvod => widget.tip == tipGotovProizvod;
 
   @override
   void initState() {
     super.initState();
 
-    searchController.addListener(() {
-      setState(() {});
-    });
+    searchController.addListener(_promjenaPretrage);
+
+    _firmaWorker = ever(_firmaController.izabranaFirma, (_) => _ucitaj());
+    _ucitaj();
   }
 
   @override
   void dispose() {
+    _pretragaTimer?.cancel();
+    _firmaWorker.dispose();
     searchController.dispose();
     super.dispose();
   }
 
+  void _promjenaPretrage() {
+    // Osvježava dugme za brisanje teksta.
+    setState(() {});
+
+    final tekst = searchController.text.trim();
+    if (tekst == _pretraga) return;
+
+    _pretragaTimer?.cancel();
+    _pretragaTimer = Timer(const Duration(milliseconds: 400), () {
+      _pretraga = tekst;
+      _ucitaj();
+    });
+  }
+
+  // Učitava zadatu stranicu; bez parametra kreće od prve (nova firma ili
+  // pretraga).
+  Future<void> _ucitaj([int stranica = 1]) async {
+    final firma = _firmaController.izabranaFirma.value;
+    final zahtjev = ++_zahtjev;
+
+    if (firma == null) {
+      setState(() {
+        artikli = [];
+        _greska = null;
+        _stranica = 1;
+        _zadnjaStranica = 1;
+        _ukupno = 0;
+        _od = null;
+        _do = null;
+      });
+      return;
+    }
+
+    setState(() {
+      _ucitavanje = true;
+      _greska = null;
+    });
+
+    try {
+      final rezultat = await _service.fetchArticles(
+        firma.id,
+        type: widget.tip,
+        page: stranica,
+        search: _pretraga,
+        trashed: _obrisani ? 'only' : null,
+      );
+      if (!mounted || zahtjev != _zahtjev) return;
+      setState(() {
+        artikli = rezultat.artikli;
+        _stranica = rezultat.stranica;
+        _zadnjaStranica = rezultat.zadnjaStranica;
+        _ukupno = rezultat.ukupno;
+        _poStranici = rezultat.poStranici;
+        _od = rezultat.od;
+        _do = rezultat.doBroja;
+      });
+    } on ApiException catch (e) {
+      if (!mounted || zahtjev != _zahtjev) return;
+      setState(() => _greska = e.message);
+    } finally {
+      if (mounted && zahtjev == _zahtjev) {
+        setState(() => _ucitavanje = false);
+      }
+    }
+  }
+
+  // Nakon brisanja zadnjeg reda na stranici vraća se na prethodnu.
+  void _osvjeziStranicu({bool uklonjenRed = false}) {
+    final stranica = uklonjenRed && artikli.length == 1 && _stranica > 1
+        ? _stranica - 1
+        : _stranica;
+    _ucitaj(stranica);
+  }
+
   Future<void> _dodajNoviArtikal() async {
+    final firma = _firmaController.izabranaFirma.value;
+    if (firma == null) return;
+
     final noviArtikal = await showDialog<Artikal>(
       context: context,
       barrierDismissible: false,
-      builder: (context) => const _DodajArtikalDialog(),
+      builder: (context) => _ArtikalDialog(tip: widget.tip, firmaId: firma.id),
     );
 
     if (noviArtikal == null || !mounted) return;
 
+    _poruka(context, 'Artikal ${noviArtikal.naziv} je dodat.');
+    _ucitaj(_stranica);
+  }
+
+  Future<void> _izmijeniArtikal(Artikal artikal) async {
+    final firma = _firmaController.izabranaFirma.value;
+    if (firma == null) return;
+
+    final izmijenjen = await showDialog<Artikal>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) =>
+          _ArtikalDialog(tip: widget.tip, firmaId: firma.id, artikal: artikal),
+    );
+
+    if (izmijenjen == null || !mounted) return;
+
     setState(() {
-      artikli.add(noviArtikal);
+      final i = artikli.indexWhere((a) => a.id == izmijenjen.id);
+      if (i != -1) artikli[i] = izmijenjen;
     });
   }
 
-  void _prikaziNormative(Artikal artikal) {
-    showDialog(
+  Future<void> _prikaziNormative(Artikal artikal) async {
+    final firma = _firmaController.izabranaFirma.value;
+    if (firma == null || artikal.id == null) return;
+
+    final izmijenjeno = await showDialog<bool>(
       context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: Text('Normativi: ${artikal.naziv}'),
-          content: _NormativiTabela(normativi: artikal.normativi),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Zatvori'),
-            ),
-          ],
-        );
-      },
+      barrierDismissible: false,
+      builder: (context) => _NormativiDialog(
+        firmaId: firma.id,
+        artikal: artikal,
+        samoPrikaz: artikal.jeObrisan,
+      ),
     );
+
+    // Izmjena normativa mijenja broj stavki i cijenu koštanja proizvoda.
+    if (izmijenjeno == true && mounted) _ucitaj(_stranica);
   }
 
-  void _obrisiArtikal(Artikal artikal) {
-    showDialog(
+  Future<void> _obrisiArtikal(Artikal artikal) async {
+    final firma = _firmaController.izabranaFirma.value;
+    if (firma == null || artikal.id == null) return;
+
+    final potvrda = await showDialog<bool>(
       context: context,
       builder: (context) {
         return AlertDialog(
@@ -149,33 +268,101 @@ class _ArtikliScreenState extends State<ArtikliScreen> {
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context),
+              onPressed: () => Navigator.pop(context, false),
               child: const Text('Odustani'),
             ),
             ElevatedButton(
-              onPressed: () {
-                setState(() {
-                  artikli.remove(artikal);
-                });
-                Navigator.pop(context);
-              },
+              onPressed: () => Navigator.pop(context, true),
               child: const Text('Obriši'),
             ),
           ],
         );
       },
     );
+
+    if (potvrda != true || !mounted) return;
+
+    try {
+      await _service.deleteArticle(firma.id, artikal.id!);
+    } on ApiException catch (e) {
+      if (mounted) _poruka(context, e.message);
+      return;
+    }
+
+    if (!mounted) return;
+
+    _osvjeziStranicu(uklonjenRed: true);
+    _poruka(
+      context,
+      'Artikal ${artikal.naziv} je obrisan.',
+      action: SnackBarAction(
+        label: 'Poništi',
+        onPressed: () => _vratiArtikal(firma.id, artikal),
+      ),
+    );
+  }
+
+  Future<void> _vratiArtikal(int firmaId, Artikal artikal) async {
+    try {
+      await _service.restoreArticle(firmaId, artikal.id!);
+    } on ApiException catch (e) {
+      if (mounted) _poruka(context, e.message);
+      return;
+    }
+
+    if (!mounted) return;
+
+    _osvjeziStranicu(uklonjenRed: _obrisani);
+    _poruka(context, 'Artikal ${artikal.naziv} je vraćen.');
+  }
+
+  Widget _paginacija() {
+    final prva = _stranica > 1 && !_ucitavanje;
+    final zadnja = _stranica < _zadnjaStranica && !_ucitavanje;
+
+    return Row(
+      children: [
+        Text(
+          _ukupno == 0
+              ? 'Nema artikala'
+              : 'Prikazano ${_od ?? 0}–${_do ?? 0} od $_ukupno',
+          style: TextStyle(color: Colors.grey.shade700),
+        ),
+        if (_poStranici > 0) ...[
+          const SizedBox(width: 24),
+          Text(
+            '$_poStranici po stranici',
+            style: TextStyle(color: Colors.grey.shade700),
+          ),
+        ],
+        const Spacer(),
+        IconButton(
+          tooltip: 'Prva stranica',
+          onPressed: prva ? () => _ucitaj(1) : null,
+          icon: const Icon(Icons.first_page),
+        ),
+        IconButton(
+          tooltip: 'Prethodna stranica',
+          onPressed: prva ? () => _ucitaj(_stranica - 1) : null,
+          icon: const Icon(Icons.chevron_left),
+        ),
+        Text('Strana $_stranica od $_zadnjaStranica'),
+        IconButton(
+          tooltip: 'Sljedeća stranica',
+          onPressed: zadnja ? () => _ucitaj(_stranica + 1) : null,
+          icon: const Icon(Icons.chevron_right),
+        ),
+        IconButton(
+          tooltip: 'Zadnja stranica',
+          onPressed: zadnja ? () => _ucitaj(_zadnjaStranica) : null,
+          icon: const Icon(Icons.last_page),
+        ),
+      ],
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final searchText = searchController.text.toLowerCase();
-
-    final filtriraniArtikli = artikli.where((artikal) {
-      return artikal.sifra.toLowerCase().contains(searchText) ||
-          artikal.naziv.toLowerCase().contains(searchText);
-    }).toList();
-
     const boldText = TextStyle(fontWeight: FontWeight.bold);
 
     return SingleChildScrollView(
@@ -183,12 +370,45 @@ class _ArtikliScreenState extends State<ArtikliScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Artikli',
-            style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
+          Text(
+            _gotovProizvod
+                ? 'Artikli gotovih proizvoda'
+                : 'Artikli repromaterijala',
+            style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
           ),
 
           const SizedBox(height: 24),
+
+          if (_greska != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.error_outline,
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    _greska!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  TextButton(
+                    onPressed: () => _ucitaj(_stranica),
+                    child: const Text('Pokušaj ponovo'),
+                  ),
+                ],
+              ),
+            ),
+
+          if (_ucitavanje)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 12),
+              child: LinearProgressIndicator(),
+            ),
 
           // --------------------------------------------------
           // PRETRAGA + DUGME "DODAJ NOVI ARTIKAL" + TABELA
@@ -225,8 +445,17 @@ class _ArtikliScreenState extends State<ArtikliScreen> {
                         ),
                       ),
                       const SizedBox(width: 24),
+                      FilterChip(
+                        label: const Text('Obrisani artikli'),
+                        selected: _obrisani,
+                        onSelected: (v) {
+                          setState(() => _obrisani = v);
+                          _ucitaj();
+                        },
+                      ),
+                      const SizedBox(width: 12),
                       ElevatedButton.icon(
-                        onPressed: _dodajNoviArtikal,
+                        onPressed: _obrisani ? null : _dodajNoviArtikal,
                         icon: const Icon(Icons.add),
                         label: const Text('Dodaj novi artikal'),
                       ),
@@ -249,32 +478,45 @@ class _ArtikliScreenState extends State<ArtikliScreen> {
                         dataRowMinHeight: 55,
                         dataRowMaxHeight: 65,
                         columnSpacing: 35,
-                        columns: const [
-                          DataColumn(label: Text('Šifra', style: boldText)),
-                          DataColumn(
+                        columns: [
+                          const DataColumn(
+                            label: Text('Šifra', style: boldText),
+                          ),
+                          const DataColumn(
                             label: Text('Naziv artikla', style: boldText),
                           ),
-                          DataColumn(
+                          const DataColumn(
                             label: Text('Jedinica mjere', style: boldText),
                           ),
+                          if (_gotovProizvod)
+                            const DataColumn(
+                              label: Text('Br. normativa', style: boldText),
+                            ),
                           DataColumn(
-                            label: Text('Br. normativa', style: boldText),
+                            label: Text(
+                              _gotovProizvod
+                                  ? 'Cijena po normativu'
+                                  : 'Prosječna nabavna cijena',
+                              style: boldText,
+                            ),
                           ),
-                          DataColumn(
-                            label: Text('Cijena po normativu', style: boldText),
+                          const DataColumn(
+                            label: Text('Akcije', style: boldText),
                           ),
-                          DataColumn(label: Text('Akcije', style: boldText)),
                         ],
-                        rows: filtriraniArtikli.map((artikal) {
+                        rows: artikli.map((artikal) {
                           return DataRow(
                             cells: [
                               DataCell(Text(artikal.sifra)),
                               DataCell(Text(artikal.naziv)),
                               DataCell(Text(artikal.jm)),
-                              DataCell(Text('${artikal.normativi.length}')),
+                              if (_gotovProizvod)
+                                DataCell(Text('${artikal.brojNormativa}')),
                               DataCell(
                                 Text(
-                                  '${_format(artikal.cijenaNormativa)} €',
+                                  _gotovProizvod || artikal.cijena != null
+                                      ? '${_format(artikal.cijenaNormativa)} €'
+                                      : '-',
                                   style: const TextStyle(
                                     fontWeight: FontWeight.w600,
                                   ),
@@ -283,17 +525,39 @@ class _ArtikliScreenState extends State<ArtikliScreen> {
                               DataCell(
                                 Row(
                                   children: [
-                                    IconButton(
-                                      tooltip: 'Normativi',
-                                      onPressed: () =>
-                                          _prikaziNormative(artikal),
-                                      icon: const Icon(Icons.list_alt),
-                                    ),
-                                    IconButton(
-                                      tooltip: 'Obriši',
-                                      onPressed: () => _obrisiArtikal(artikal),
-                                      icon: const Icon(Icons.delete_outline),
-                                    ),
+                                    if (_gotovProizvod)
+                                      IconButton(
+                                        tooltip: 'Normativi',
+                                        onPressed: () =>
+                                            _prikaziNormative(artikal),
+                                        icon: const Icon(Icons.list_alt),
+                                      ),
+                                    if (artikal.jeObrisan)
+                                      IconButton(
+                                        tooltip: 'Vrati',
+                                        onPressed: () => _vratiArtikal(
+                                          _firmaController
+                                              .izabranaFirma
+                                              .value!
+                                              .id,
+                                          artikal,
+                                        ),
+                                        icon: const Icon(Icons.restore),
+                                      )
+                                    else ...[
+                                      IconButton(
+                                        tooltip: 'Izmijeni',
+                                        onPressed: () =>
+                                            _izmijeniArtikal(artikal),
+                                        icon: const Icon(Icons.edit_outlined),
+                                      ),
+                                      IconButton(
+                                        tooltip: 'Obriši',
+                                        onPressed: () =>
+                                            _obrisiArtikal(artikal),
+                                        icon: const Icon(Icons.delete_outline),
+                                      ),
+                                    ],
                                   ],
                                 ),
                               ),
@@ -303,6 +567,10 @@ class _ArtikliScreenState extends State<ArtikliScreen> {
                       ),
                     ),
                   ),
+
+                  const SizedBox(height: 8),
+
+                  _paginacija(),
                 ],
               ),
             ),
@@ -315,13 +583,20 @@ class _ArtikliScreenState extends State<ArtikliScreen> {
 
 // ======================================================================
 // TABELA NORMATIVA (prikaz u dijalogu)
-// Ako je onObrisi != null, svaki red ima dugme za brisanje.
+// Ako je onIzmijeni/onObrisi != null, svaki red ima dugme za tu akciju.
 // ======================================================================
 class _NormativiTabela extends StatelessWidget {
   final List<Normativ> normativi;
+  final ValueChanged<Normativ>? onIzmijeni;
   final ValueChanged<Normativ>? onObrisi;
 
-  const _NormativiTabela({required this.normativi, this.onObrisi});
+  const _NormativiTabela({
+    required this.normativi,
+    this.onIzmijeni,
+    this.onObrisi,
+  });
+
+  bool get _akcije => onIzmijeni != null || onObrisi != null;
 
   @override
   Widget build(BuildContext context) {
@@ -339,7 +614,7 @@ class _NormativiTabela extends StatelessWidget {
           const DataColumn(label: Text('Količina', style: boldText)),
           const DataColumn(label: Text('JM', style: boldText)),
           const DataColumn(label: Text('Iznos', style: boldText)),
-          if (onObrisi != null) const DataColumn(label: Text('')),
+          if (_akcije) const DataColumn(label: Text('')),
         ],
         rows: [
           ...normativi.map((n) {
@@ -347,15 +622,27 @@ class _NormativiTabela extends StatelessWidget {
               cells: [
                 DataCell(Text(n.naziv)),
                 DataCell(Text('${_format(n.cijena)} €')),
-                DataCell(Text(n.kolicina.toString().replaceAll('.', ','))),
+                DataCell(Text(_formatKolicina(n.kolicina))),
                 DataCell(Text(n.jm)),
                 DataCell(Text('${_format(n.iznos)} €')),
-                if (onObrisi != null)
+                if (_akcije)
                   DataCell(
-                    IconButton(
-                      tooltip: 'Ukloni normativ',
-                      onPressed: () => onObrisi!(n),
-                      icon: const Icon(Icons.delete_outline),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (onIzmijeni != null)
+                          IconButton(
+                            tooltip: 'Izmijeni količinu',
+                            onPressed: () => onIzmijeni!(n),
+                            icon: const Icon(Icons.edit_outlined),
+                          ),
+                        if (onObrisi != null)
+                          IconButton(
+                            tooltip: 'Ukloni normativ',
+                            onPressed: () => onObrisi!(n),
+                            icon: const Icon(Icons.delete_outline),
+                          ),
+                      ],
                     ),
                   ),
               ],
@@ -368,7 +655,7 @@ class _NormativiTabela extends StatelessWidget {
               const DataCell(Text('')),
               const DataCell(Text('')),
               DataCell(Text('${_format(ukupno)} €', style: boldText)),
-              if (onObrisi != null) const DataCell(Text('')),
+              if (_akcije) const DataCell(Text('')),
             ],
           ),
         ],
@@ -378,107 +665,271 @@ class _NormativiTabela extends StatelessWidget {
 }
 
 // ======================================================================
-// POP UP: DODAJ NOVI ARTIKAL
-// Artikal se može sačuvati samo ako ima bar jedan normativ.
-// Vraća Artikal ili null ako korisnik odustane.
+// IZBOR REPROMATERIJALA (pretraga po šifri ili nazivu na serveru)
 // ======================================================================
-class _DodajArtikalDialog extends StatefulWidget {
-  const _DodajArtikalDialog();
+class _MaterijalPolje extends StatefulWidget {
+  final int firmaId;
+  final Artikal? izabran;
+  final ValueChanged<Artikal?> onChanged;
+
+  const _MaterijalPolje({
+    required this.firmaId,
+    required this.izabran,
+    required this.onChanged,
+  });
 
   @override
-  State<_DodajArtikalDialog> createState() => _DodajArtikalDialogState();
+  State<_MaterijalPolje> createState() => _MaterijalPoljeState();
 }
 
-class _DodajArtikalDialogState extends State<_DodajArtikalDialog> {
+class _MaterijalPoljeState extends State<_MaterijalPolje> {
+  final _controller = TextEditingController();
+  final _focusNode = FocusNode();
+  final ArticlesService _service = ArticlesService();
+
+  static String _prikaz(Artikal a) => '${a.sifra} - ${a.naziv}';
+
+  @override
+  void initState() {
+    super.initState();
+    _controller.addListener(_promjenaTeksta);
+  }
+
+  @override
+  void didUpdateWidget(covariant _MaterijalPolje oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Roditelj je poništio izbor (npr. nakon dodavanja stavke). Tekst se
+    // briše poslije build-a: clear() obavještava Form, a to nije dozvoljeno
+    // dok traje build.
+    if (widget.izabran == null && oldWidget.izabran != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && widget.izabran == null) _controller.clear();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  // Ručna izmjena teksta poništava izabrani materijal.
+  void _promjenaTeksta() {
+    final izabran = widget.izabran;
+    if (izabran != null && _controller.text != _prikaz(izabran)) {
+      widget.onChanged(null);
+    }
+  }
+
+  Future<Iterable<Artikal>> _opcije(TextEditingValue value) async {
+    final tekst = value.text.trim();
+    if (tekst.isEmpty) return const [];
+
+    try {
+      final rezultat = await _service.fetchArticles(
+        widget.firmaId,
+        type: tipRepromaterijal,
+        search: tekst,
+        perPage: 20,
+      );
+      return rezultat.artikli;
+    } on ApiException {
+      return const [];
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Autocomplete<Artikal>(
+      textEditingController: _controller,
+      focusNode: _focusNode,
+      displayStringForOption: _prikaz,
+      optionsBuilder: _opcije,
+      onSelected: widget.onChanged,
+      fieldViewBuilder: (context, controller, focusNode, onSubmitted) {
+        return TextFormField(
+          controller: controller,
+          focusNode: focusNode,
+          decoration: _decoration(
+            'Repromaterijal',
+          ).copyWith(hintText: 'Šifra ili naziv'),
+          validator: (_) =>
+              widget.izabran == null ? 'Izaberite repromaterijal' : null,
+          onFieldSubmitted: (_) => onSubmitted(),
+        );
+      },
+    );
+  }
+}
+
+// ======================================================================
+// POP UP: DODAJ / IZMIJENI ARTIKAL
+// Gotov proizvod se kreira zajedno sa normativom (bar jedna stavka);
+// repromaterijal nema normativ. Pri izmjeni se mijenjaju samo šifra, naziv
+// i JM — normativ se uređuje posebno.
+// Vraća sačuvani Artikal ili null ako korisnik odustane.
+// ======================================================================
+class _ArtikalDialog extends StatefulWidget {
+  final String tip;
+  final int firmaId;
+  final Artikal? artikal;
+
+  const _ArtikalDialog({
+    required this.tip,
+    required this.firmaId,
+    this.artikal,
+  });
+
+  @override
+  State<_ArtikalDialog> createState() => _ArtikalDialogState();
+}
+
+class _ArtikalDialogState extends State<_ArtikalDialog> {
   final _artikalFormKey = GlobalKey<FormState>();
   final _normativFormKey = GlobalKey<FormState>();
+  final ArticlesService _service = ArticlesService();
 
-  final sifraController = TextEditingController();
-  final nazivController = TextEditingController();
-  String _jm = 'kom';
+  late final sifraController = TextEditingController(
+    text: widget.artikal?.sifra,
+  );
+  late final nazivController = TextEditingController(
+    text: widget.artikal?.naziv,
+  );
+  late String _jm =
+      widget.artikal?.jm ?? (_saNormativom ? jmIzApi('pcs') : 'kg');
 
-  // Polja za unos jednog normativa
-  final normativNazivController = TextEditingController();
-  final normativCijenaController = TextEditingController();
+  // Polja za unos jedne stavke normativa
+  Artikal? _materijal;
   final normativKolicinaController = TextEditingController();
-  String _normativJm = 'kg';
 
   final List<Normativ> _normativi = [];
   bool _prikaziGreskuNormativa = false;
+
+  bool _cuvanje = false;
+  ApiException? _greska;
+
+  bool get _izmjena => widget.artikal != null;
+
+  bool get _saNormativom => !_izmjena && widget.tip == tipGotovProizvod;
 
   @override
   void dispose() {
     sifraController.dispose();
     nazivController.dispose();
-    normativNazivController.dispose();
-    normativCijenaController.dispose();
     normativKolicinaController.dispose();
     super.dispose();
-  }
-
-  String? _obavezno(String? value) {
-    if (value == null || value.trim().isEmpty) return 'Obavezno polje';
-    return null;
-  }
-
-  String? _obaveznBroj(String? value) {
-    if (value == null || value.trim().isEmpty) return 'Obavezno polje';
-    final broj = double.tryParse(value.trim().replaceAll(',', '.'));
-    if (broj == null) return 'Unesite ispravan broj';
-    if (broj <= 0) return 'Mora biti veće od 0';
-    return null;
   }
 
   void _dodajNormativ() {
     if (!_normativFormKey.currentState!.validate()) return;
 
+    final materijal = _materijal!;
+    if (_normativi.any((n) => n.materialId == materijal.id)) {
+      setState(
+        () => _greska = ApiException('${materijal.naziv} je već u normativu.'),
+      );
+      return;
+    }
+
     setState(() {
       _normativi.add(
         Normativ(
-          naziv: normativNazivController.text.trim(),
-          cijena: _parse(normativCijenaController.text),
+          materialId: materijal.id,
+          naziv: materijal.naziv,
+          cijena: materijal.cijena ?? 0,
           kolicina: _parse(normativKolicinaController.text),
-          jm: _normativJm,
+          jm: materijal.jm,
         ),
       );
+      _materijal = null;
       _prikaziGreskuNormativa = false;
+      _greska = null;
     });
 
-    normativNazivController.clear();
-    normativCijenaController.clear();
     normativKolicinaController.clear();
   }
 
-  void _sacuvaj() {
+  Future<void> _sacuvaj() async {
     final artikalOk = _artikalFormKey.currentState!.validate();
 
     setState(() {
-      _prikaziGreskuNormativa = _normativi.isEmpty;
+      _prikaziGreskuNormativa = _saNormativom && _normativi.isEmpty;
     });
 
-    if (!artikalOk || _normativi.isEmpty) return;
+    if (!artikalOk || _prikaziGreskuNormativa) return;
 
-    Navigator.pop(
-      context,
-      Artikal(
-        sifra: sifraController.text.trim(),
-        naziv: nazivController.text.trim(),
-        jm: _jm,
-        normativi: List.unmodifiable(_normativi),
-      ),
-    );
+    setState(() {
+      _cuvanje = true;
+      _greska = null;
+    });
+
+    final sifra = sifraController.text.trim();
+    final naziv = nazivController.text.trim();
+
+    try {
+      final Artikal sacuvan;
+      final stari = widget.artikal;
+
+      if (stari == null) {
+        sacuvan = await _service.createArticle(
+          widget.firmaId,
+          type: widget.tip,
+          code: sifra,
+          name: naziv,
+          unitOfMeasure: _jm,
+          bomItems: _normativi,
+        );
+      } else {
+        // Šalju se samo izmijenjena polja.
+        sacuvan = await _service.updateArticle(
+          widget.firmaId,
+          stari.id!,
+          code: sifra != stari.sifra ? sifra : null,
+          name: naziv != stari.naziv ? naziv : null,
+          unitOfMeasure: _jm != stari.jm ? _jm : null,
+        );
+      }
+
+      if (mounted) Navigator.pop(context, sacuvan);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _greska = e;
+        _cuvanje = false;
+      });
+    }
   }
 
-  Widget _jmDropdown(String value, ValueChanged<String> onChanged) {
+  Widget _jmDropdown() {
     return DropdownButtonFormField<String>(
-      initialValue: value,
+      initialValue: _jm,
       decoration: _decoration('Jedinica mjere'),
       items: _jediniceMjere
           .map((jm) => DropdownMenuItem(value: jm, child: Text(jm)))
           .toList(),
+      forceErrorText: _greska?.fieldError('unit_of_measure'),
       onChanged: (v) {
-        if (v != null) onChanged(v);
+        if (v != null) setState(() => _jm = v);
       },
+    );
+  }
+
+  Widget _redGreske(String tekst) {
+    final boja = Theme.of(context).colorScheme.error;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Row(
+        children: [
+          Icon(Icons.error_outline, color: boja, size: 20),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(tekst, style: TextStyle(color: boja)),
+          ),
+        ],
+      ),
     );
   }
 
@@ -486,9 +937,11 @@ class _DodajArtikalDialogState extends State<_DodajArtikalDialog> {
   Widget build(BuildContext context) {
     const polje = 200.0;
 
-    final decimalFormatter = FilteringTextInputFormatter.allow(
-      RegExp(r'[0-9,.]'),
-    );
+    final greskaNormativa = _greska?.fieldErrors.entries
+        .where((e) => e.key.startsWith('bom_items'))
+        .firstOrNull
+        ?.value
+        .first;
 
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -500,9 +953,12 @@ class _DodajArtikalDialogState extends State<_DodajArtikalDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Dodaj novi artikal',
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+              Text(
+                _izmjena ? 'Izmijeni artikal' : 'Dodaj novi artikal',
+                style: const TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
 
               const SizedBox(height: 20),
@@ -525,154 +981,129 @@ class _DodajArtikalDialogState extends State<_DodajArtikalDialog> {
                               width: polje,
                               child: TextFormField(
                                 controller: sifraController,
-                                decoration: _decoration('Šifra'),
-                                validator: _obavezno,
+                                maxLength: 50,
+                                decoration: _decoration(
+                                  'Šifra',
+                                ).copyWith(counterText: ''),
+                                forceErrorText: _greska?.fieldError('code'),
+                                validator: _validirajObavezno,
                               ),
                             ),
                             SizedBox(
                               width: polje * 2 + 16,
                               child: TextFormField(
                                 controller: nazivController,
-                                decoration: _decoration('Naziv artikla'),
-                                validator: _obavezno,
-                              ),
-                            ),
-                            SizedBox(
-                              width: polje,
-                              child: _jmDropdown(
-                                _jm,
-                                (v) => setState(() => _jm = v),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-
-                      const SizedBox(height: 28),
-
-                      // --------------------------------------------------
-                      // NORMATIVI
-                      // --------------------------------------------------
-                      const Text(
-                        'Normativi',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Artikal mora imati bar jedan normativ.',
-                        style: TextStyle(color: Colors.grey.shade600),
-                      ),
-
-                      const SizedBox(height: 16),
-
-                      Form(
-                        key: _normativFormKey,
-                        child: Wrap(
-                          spacing: 16,
-                          runSpacing: 16,
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          children: [
-                            SizedBox(
-                              width: polje,
-                              child: TextFormField(
-                                controller: normativNazivController,
-                                decoration: _decoration('Naziv'),
-                                validator: _obavezno,
-                              ),
-                            ),
-                            SizedBox(
-                              width: polje * 0.75,
-                              child: TextFormField(
-                                controller: normativCijenaController,
-                                keyboardType:
-                                    const TextInputType.numberWithOptions(
-                                      decimal: true,
-                                    ),
-                                inputFormatters: [decimalFormatter],
+                                maxLength: 255,
                                 decoration: _decoration(
-                                  'Cijena',
-                                  suffixText: '€',
-                                ),
-                                validator: _obaveznBroj,
+                                  'Naziv artikla',
+                                ).copyWith(counterText: ''),
+                                forceErrorText: _greska?.fieldError('name'),
+                                validator: _validirajObavezno,
                               ),
                             ),
-                            SizedBox(
-                              width: polje * 0.75,
-                              child: TextFormField(
-                                controller: normativKolicinaController,
-                                keyboardType:
-                                    const TextInputType.numberWithOptions(
-                                      decimal: true,
-                                    ),
-                                inputFormatters: [decimalFormatter],
-                                decoration: _decoration('Količina'),
-                                validator: _obaveznBroj,
-                                onFieldSubmitted: (_) => _dodajNormativ(),
-                              ),
-                            ),
-                            SizedBox(
-                              width: polje * 0.75,
-                              child: _jmDropdown(
-                                _normativJm,
-                                (v) => setState(() => _normativJm = v),
-                              ),
-                            ),
-                            OutlinedButton.icon(
-                              onPressed: _dodajNormativ,
-                              icon: const Icon(Icons.add),
-                              label: const Text('Dodaj normativ'),
-                              style: OutlinedButton.styleFrom(
-                                minimumSize: const Size(0, 52),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 20,
-                                ),
-                              ),
-                            ),
+                            SizedBox(width: polje, child: _jmDropdown()),
                           ],
                         ),
                       ),
 
-                      const SizedBox(height: 16),
-
-                      if (_normativi.isNotEmpty)
-                        Container(
-                          decoration: BoxDecoration(
-                            border: Border.all(color: Colors.grey.shade300),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(10),
-                            child: _NormativiTabela(
-                              normativi: _normativi,
-                              onObrisi: (n) =>
-                                  setState(() => _normativi.remove(n)),
-                            ),
+                      // --------------------------------------------------
+                      // NORMATIVI (samo novi gotov proizvod)
+                      // --------------------------------------------------
+                      if (_saNormativom) ...[
+                        const SizedBox(height: 28),
+                        const Text(
+                          'Normativi',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
                           ),
                         ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Artikal mora imati bar jedan normativ od '
+                          'repromaterijala. Naziv, JM i cijena se preuzimaju '
+                          'sa repromaterijala.',
+                          style: TextStyle(color: Colors.grey.shade600),
+                        ),
 
-                      if (_prikaziGreskuNormativa)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: Row(
+                        const SizedBox(height: 16),
+
+                        Form(
+                          key: _normativFormKey,
+                          child: Wrap(
+                            spacing: 16,
+                            runSpacing: 16,
+                            crossAxisAlignment: WrapCrossAlignment.center,
                             children: [
-                              Icon(
-                                Icons.error_outline,
-                                color: Theme.of(context).colorScheme.error,
-                                size: 20,
+                              SizedBox(
+                                width: polje * 2,
+                                child: _MaterijalPolje(
+                                  firmaId: widget.firmaId,
+                                  izabran: _materijal,
+                                  onChanged: (m) =>
+                                      setState(() => _materijal = m),
+                                ),
                               ),
-                              const SizedBox(width: 8),
-                              Text(
-                                'Dodajte bar jedan normativ prije čuvanja artikla.',
-                                style: TextStyle(
-                                  color: Theme.of(context).colorScheme.error,
+                              SizedBox(
+                                width: polje * 0.75,
+                                child: TextFormField(
+                                  controller: normativKolicinaController,
+                                  keyboardType:
+                                      const TextInputType.numberWithOptions(
+                                        decimal: true,
+                                      ),
+                                  inputFormatters: [_decimalFormatter],
+                                  decoration: _decoration(
+                                    'Količina',
+                                    suffixText: _materijal?.jm,
+                                  ),
+                                  validator: _validirajKolicinu,
+                                  onFieldSubmitted: (_) => _dodajNormativ(),
+                                ),
+                              ),
+                              OutlinedButton.icon(
+                                onPressed: _dodajNormativ,
+                                icon: const Icon(Icons.add),
+                                label: const Text('Dodaj normativ'),
+                                style: OutlinedButton.styleFrom(
+                                  minimumSize: const Size(0, 52),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 20,
+                                  ),
                                 ),
                               ),
                             ],
                           ),
                         ),
+
+                        const SizedBox(height: 16),
+
+                        if (_normativi.isNotEmpty)
+                          Container(
+                            decoration: BoxDecoration(
+                              border: Border.all(color: Colors.grey.shade300),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(10),
+                              child: _NormativiTabela(
+                                normativi: _normativi,
+                                onObrisi: (n) =>
+                                    setState(() => _normativi.remove(n)),
+                              ),
+                            ),
+                          ),
+
+                        if (_prikaziGreskuNormativa)
+                          _redGreske(
+                            'Dodajte bar jedan normativ prije čuvanja artikla.',
+                          ),
+                        if (greskaNormativa != null)
+                          _redGreske(greskaNormativa),
+                      ],
+
+                      if (_greska != null && _greska!.fieldErrors.isEmpty)
+                        _redGreske(_greska!.message),
                     ],
                   ),
                 ),
@@ -685,7 +1116,7 @@ class _DodajArtikalDialogState extends State<_DodajArtikalDialog> {
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   OutlinedButton(
-                    onPressed: () => Navigator.pop(context),
+                    onPressed: _cuvanje ? null : () => Navigator.pop(context),
                     style: OutlinedButton.styleFrom(
                       minimumSize: const Size(0, 48),
                       padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -694,9 +1125,15 @@ class _DodajArtikalDialogState extends State<_DodajArtikalDialog> {
                   ),
                   const SizedBox(width: 12),
                   ElevatedButton.icon(
-                    onPressed: _sacuvaj,
-                    icon: const Icon(Icons.check),
-                    label: const Text('Dodaj artikal'),
+                    onPressed: _cuvanje ? null : _sacuvaj,
+                    icon: _cuvanje
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.check),
+                    label: Text(_izmjena ? 'Sačuvaj izmjene' : 'Dodaj artikal'),
                     style: ElevatedButton.styleFrom(
                       minimumSize: const Size(0, 48),
                       padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -708,6 +1145,292 @@ class _DodajArtikalDialogState extends State<_DodajArtikalDialog> {
           ),
         ),
       ),
+    );
+  }
+}
+
+// ======================================================================
+// POP UP: NORMATIVI GOTOVOG PROIZVODA
+// Stavke se dodaju, mijenjaju i brišu odmah na serveru; obrisana stavka se
+// može vratiti. Vraća true ako je normativ izmijenjen.
+// ======================================================================
+class _NormativiDialog extends StatefulWidget {
+  final int firmaId;
+  final Artikal artikal;
+  final bool samoPrikaz;
+
+  const _NormativiDialog({
+    required this.firmaId,
+    required this.artikal,
+    this.samoPrikaz = false,
+  });
+
+  @override
+  State<_NormativiDialog> createState() => _NormativiDialogState();
+}
+
+class _NormativiDialogState extends State<_NormativiDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final ArticlesService _service = ArticlesService();
+  final kolicinaController = TextEditingController();
+
+  List<Normativ> _normativi = [];
+  Artikal? _materijal;
+  Normativ? _zadnjaObrisana;
+
+  bool _ucitavanje = true;
+  bool _radi = false;
+  bool _izmijenjeno = false;
+  String? _greska;
+
+  int get _artikalId => widget.artikal.id!;
+
+  @override
+  void initState() {
+    super.initState();
+    _ucitaj();
+  }
+
+  @override
+  void dispose() {
+    kolicinaController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _ucitaj() async {
+    try {
+      final normativi = await _service.fetchBomItems(
+        widget.firmaId,
+        _artikalId,
+      );
+      if (mounted) setState(() => _normativi = normativi);
+    } on ApiException catch (e) {
+      if (mounted) setState(() => _greska = e.message);
+    } finally {
+      if (mounted) setState(() => _ucitavanje = false);
+    }
+  }
+
+  // Izvršava poziv ka serveru, pa ponovo učitava stavke (cijene i ukupno
+  // računa server).
+  Future<void> _izvrsi(Future<void> Function() poziv) async {
+    setState(() {
+      _radi = true;
+      _greska = null;
+    });
+
+    try {
+      await poziv();
+      _izmijenjeno = true;
+      await _ucitaj();
+    } on ApiException catch (e) {
+      if (mounted) setState(() => _greska = e.message);
+    } finally {
+      if (mounted) setState(() => _radi = false);
+    }
+  }
+
+  void _dodaj() {
+    if (!_formKey.currentState!.validate()) return;
+
+    final materijal = _materijal!;
+    final kolicina = _parse(kolicinaController.text);
+
+    _izvrsi(() async {
+      await _service.addBomItem(
+        widget.firmaId,
+        _artikalId,
+        materialId: materijal.id!,
+        quantity: kolicina,
+      );
+      _materijal = null;
+      _zadnjaObrisana = null;
+      kolicinaController.clear();
+    });
+  }
+
+  Future<void> _izmijeni(Normativ normativ) async {
+    final controller = TextEditingController(
+      text: _formatKolicina(normativ.kolicina),
+    );
+    final formKey = GlobalKey<FormState>();
+
+    final kolicina = await showDialog<double>(
+      context: context,
+      builder: (context) {
+        void potvrdi() {
+          if (formKey.currentState!.validate()) {
+            Navigator.pop(context, _parse(controller.text));
+          }
+        }
+
+        return AlertDialog(
+          title: Text('Količina: ${normativ.naziv}'),
+          content: Form(
+            key: formKey,
+            child: TextFormField(
+              controller: controller,
+              autofocus: true,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              inputFormatters: [_decimalFormatter],
+              decoration: _decoration('Količina', suffixText: normativ.jm),
+              validator: _validirajKolicinu,
+              onFieldSubmitted: (_) => potvrdi(),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Odustani'),
+            ),
+            ElevatedButton(onPressed: potvrdi, child: const Text('Sačuvaj')),
+          ],
+        );
+      },
+    );
+
+    controller.dispose();
+
+    if (kolicina == null || kolicina == normativ.kolicina || !mounted) return;
+
+    _izvrsi(
+      () => _service.updateBomItem(
+        widget.firmaId,
+        _artikalId,
+        normativ.id!,
+        quantity: kolicina,
+      ),
+    );
+  }
+
+  void _obrisi(Normativ normativ) {
+    _izvrsi(() async {
+      await _service.deleteBomItem(widget.firmaId, _artikalId, normativ.id!);
+      _zadnjaObrisana = normativ;
+    });
+  }
+
+  void _vratiObrisanu() {
+    final normativ = _zadnjaObrisana!;
+
+    _izvrsi(() async {
+      await _service.restoreBomItem(widget.firmaId, _artikalId, normativ.id!);
+      _zadnjaObrisana = null;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final uredjivanje = !widget.samoPrikaz && !_radi;
+    final boja = Theme.of(context).colorScheme.error;
+
+    return AlertDialog(
+      title: Text('Normativi: ${widget.artikal.naziv}'),
+      content: SizedBox(
+        width: 720,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (_ucitavanje || _radi)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 12),
+                  child: LinearProgressIndicator(),
+                ),
+
+              if (!_ucitavanje)
+                _NormativiTabela(
+                  normativi: _normativi,
+                  onIzmijeni: uredjivanje ? _izmijeni : null,
+                  onObrisi: uredjivanje ? _obrisi : null,
+                ),
+
+              if (_zadnjaObrisana != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Row(
+                    children: [
+                      Text('Stavka ${_zadnjaObrisana!.naziv} je uklonjena.'),
+                      TextButton(
+                        onPressed: _radi ? null : _vratiObrisanu,
+                        child: const Text('Poništi'),
+                      ),
+                    ],
+                  ),
+                ),
+
+              if (_greska != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Row(
+                    children: [
+                      Icon(Icons.error_outline, color: boja, size: 20),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(_greska!, style: TextStyle(color: boja)),
+                      ),
+                    ],
+                  ),
+                ),
+
+              if (!widget.samoPrikaz) ...[
+                const SizedBox(height: 20),
+                Form(
+                  key: _formKey,
+                  child: Wrap(
+                    spacing: 16,
+                    runSpacing: 16,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      SizedBox(
+                        width: 320,
+                        child: _MaterijalPolje(
+                          firmaId: widget.firmaId,
+                          izabran: _materijal,
+                          onChanged: (m) => setState(() => _materijal = m),
+                        ),
+                      ),
+                      SizedBox(
+                        width: 150,
+                        child: TextFormField(
+                          controller: kolicinaController,
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
+                          inputFormatters: [_decimalFormatter],
+                          decoration: _decoration(
+                            'Količina',
+                            suffixText: _materijal?.jm,
+                          ),
+                          validator: _validirajKolicinu,
+                          onFieldSubmitted: (_) => _dodaj(),
+                        ),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: _radi ? null : _dodaj,
+                        icon: const Icon(Icons.add),
+                        label: const Text('Dodaj stavku'),
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size(0, 52),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, _izmijenjeno),
+          child: const Text('Zatvori'),
+        ),
+      ],
     );
   }
 }

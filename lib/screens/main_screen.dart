@@ -4,7 +4,10 @@ import 'package:knjigovodstvo_app/screens/osnovni_podaci/objekti/magacin_gotovih
 import 'package:knjigovodstvo_app/screens/osnovni_podaci/objekti/magacin_repro.dart';
 import 'package:knjigovodstvo_app/screens/osnovni_podaci/objekti/proizvodnja_utoku.dart';
 
+import '../controllers/firma_controller.dart';
 import '../controllers/navigation_controller.dart';
+import '../models/article.dart';
+import '../models/company.dart';
 import 'osnovni_podaci/o_firmi_screen.dart';
 import 'osnovni_podaci/objekti/objekti_screen.dart';
 import 'osnovni_podaci/artikli_screen.dart';
@@ -33,7 +36,10 @@ class MainScreen extends StatelessWidget {
 
     OFirmiScreen(),
     const ObjektiScreen(),
-    const ArtikliScreen(),
+    const ArtikliScreen(
+      key: ValueKey(tipRepromaterijal),
+      tip: tipRepromaterijal,
+    ),
 
     const KalkulacijaNabavnihCijenaScreen(),
     const RadniNalogScreen(),
@@ -49,6 +55,8 @@ class MainScreen extends StatelessWidget {
     const MagacinRepromaterijala(),
     const ProizvodnjaUToku(),
     const MagacinGotovihProizvoda(),
+
+    const ArtikliScreen(key: ValueKey(tipGotovProizvod), tip: tipGotovProizvod),
   ];
 
   @override
@@ -192,7 +200,13 @@ class MainScreen extends StatelessWidget {
       final izabrana = firmaController.izabranaFirma.value;
       final ostale = firmaController.firme.where((f) => f != izabrana).toList();
 
-      return PopupMenuButton<String>(
+      final naziv =
+          izabrana?.name ??
+          (firmaController.isLoading.value
+              ? 'Učitavanje firmi...'
+              : firmaController.errorMessage.value ?? 'Nema firmi');
+
+      return PopupMenuButton<Company>(
         tooltip: 'Promijeni firmu',
         offset: const Offset(0, 60),
 
@@ -201,7 +215,7 @@ class MainScreen extends StatelessWidget {
         itemBuilder: (context) {
           if (ostale.isEmpty) {
             return const [
-              PopupMenuItem<String>(
+              PopupMenuItem<Company>(
                 enabled: false,
                 child: Text('Nema drugih firmi'),
               ),
@@ -209,7 +223,10 @@ class MainScreen extends StatelessWidget {
           }
 
           return ostale.map((firma) {
-            return PopupMenuItem<String>(value: firma, child: Text(firma));
+            return PopupMenuItem<Company>(
+              value: firma,
+              child: Text(firma.name),
+            );
           }).toList();
         },
 
@@ -225,7 +242,7 @@ class MainScreen extends StatelessWidget {
 
               Flexible(
                 child: Text(
-                  izabrana,
+                  naziv,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     fontSize: 14,
@@ -279,18 +296,26 @@ Widget _buildOsnovniPodaciMenu(NavigationController controller) {
       ),
 
       MenuItemButton(
-        onPressed: controller.openArtikli,
+        onPressed: controller.openArtikliRepromaterijala,
         child: const Text('Artikli repromaterijala'),
       ),
 
       MenuItemButton(
-        onPressed: controller.openArtikli,
+        onPressed: controller.openArtikliGotovihProizvoda,
         child: const Text('Artikli gotovih proizvoda'),
       ),
 
       MenuItemButton(
         onPressed: controller.openOFirmi,
         child: const Text('Glavna knjiga'),
+      ),
+      MenuItemButton(
+        onPressed: controller.openOFirmi,
+        child: const Text('Dobavljači'),
+      ),
+      MenuItemButton(
+        onPressed: controller.openOFirmi,
+        child: const Text('Kupci'),
       ),
     ],
     builder: (context, menuController, child) {
@@ -321,25 +346,4 @@ Widget _buildOsnovniPodaciMenu(NavigationController controller) {
       );
     },
   );
-}
-
-// ======================================================================
-// FIRME
-// Za sada demo podaci. Kasnije ovdje učitavaš firme iz baze / API-ja.
-// (Možeš ovu klasu premjestiti u ../controllers/firma_controller.dart)
-// ======================================================================
-class FirmaController extends GetxController {
-  final RxList<String> firme = <String>[
-    'D.O.O LA VISTA RA',
-    'Firma 2 d.o.o.',
-    'Firma 3 d.o.o.',
-  ].obs;
-
-  final RxString izabranaFirma = 'D.O.O LA VISTA RA'.obs;
-
-  void izaberiFirmu(String firma) {
-    izabranaFirma.value = firma;
-
-    // Ovdje kasnije učitaj podatke izabrane firme (artikli, objekti...).
-  }
 }

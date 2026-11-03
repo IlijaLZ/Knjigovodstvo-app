@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
-import 'package:knjigovodstvo_app/screens/osnovni_podaci/artikli_screen.dart';
+import 'package:knjigovodstvo_app/models/article.dart';
 import 'package:knjigovodstvo_app/widgets/input_widget.dart';
 
 double _parse(String text) {

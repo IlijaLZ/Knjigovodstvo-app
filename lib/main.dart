@@ -1,9 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
+import 'controllers/auth_controller.dart';
 import 'routes/app_routes.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  final authController = Get.put(AuthController(), permanent: true);
+  await authController.restoreSession();
+
   runApp(const KnjigovodstvoApp());
 }
 
@@ -25,7 +31,9 @@ class KnjigovodstvoApp extends StatelessWidget {
         scaffoldBackgroundColor: const Color(0xFFF8FAFC),
       ),
 
-      initialRoute: AppRoutes.main,
+      initialRoute: Get.find<AuthController>().isLoggedIn
+          ? AppRoutes.main
+          : AppRoutes.login,
 
       getPages: AppRoutes.pages,
     );
