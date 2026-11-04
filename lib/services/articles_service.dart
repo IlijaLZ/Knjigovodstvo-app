@@ -1,5 +1,6 @@
 import '../models/article.dart';
 import '../models/company.dart';
+import '../models/stock_card.dart';
 import 'api_client.dart';
 
 // Firme, artikli i normativi prijavljenog korisnika.
@@ -137,6 +138,38 @@ class ArticlesService {
   }
 
   // DELETE /companies/{company}/articles/{article} — meko brisanje.
+  // GET /companies/{company}/articles/{article}/stock-card
+  // Bez warehouseId vide se promjene na svim skladištima.
+  Future<StranicaKartice> fetchStockCard(
+    int companyId,
+    int articleId, {
+    int? warehouseId,
+    int page = 1,
+    int perPage = 50,
+  }) async {
+    final body = await _client.get(
+      '/companies/$companyId/articles/$articleId/stock-card',
+      query: {
+        'page': '$page',
+        'per_page': '$perPage',
+        if (warehouseId != null) 'warehouse_id': '$warehouseId',
+      },
+    );
+
+    final meta = body['meta'] as Map<String, dynamic>? ?? const {};
+
+    return StranicaKartice(
+      promjene: (body['data'] as List)
+          .map((e) => PromjenaKartice.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      stranica: meta['current_page'] as int? ?? page,
+      zadnjaStranica: meta['last_page'] as int? ?? page,
+      ukupno: meta['total'] as int? ?? 0,
+      od: meta['from'] as int?,
+      doBroja: meta['to'] as int?,
+    );
+  }
+
   Future<void> deleteArticle(int companyId, int articleId) {
     return _client.delete(_artikal(companyId, articleId));
   }
