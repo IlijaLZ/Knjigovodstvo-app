@@ -35,7 +35,9 @@ String jmZaApi(String jm) => switch (jm) {
   _ => jm,
 };
 
-// Jedan red normativa: koliko čega (sirovine) ulazi u artikal.
+// Jedan red normativa: koliko čega (sirovine) ulazi u artikal. Stavka se
+// veže za sirovinu preko materialId; naziv, cijenu i JM server preuzima od
+// sirovine i vraća samo za prikaz.
 class Normativ {
   final int? id;
   final int? materialId;
@@ -61,15 +63,19 @@ class Normativ {
     return Normativ(
       id: json['id'] as int?,
       materialId: json['material_id'] as int?,
-      naziv: json['name'] as String,
+      naziv: json['name'] as String? ?? '',
       cijena: _broj(json['price']) ?? 0,
       kolicina: _broj(json['quantity']) ?? 0,
-      jm: jmIzApi(json['unit_of_measure'] as String),
+      jm: jmIzApi(json['unit_of_measure'] as String? ?? ''),
       ukupno: _broj(json['total']),
     );
   }
 
   double get iznos => _ukupno ?? cijena * kolicina;
+
+  // Stare stavke nisu vezane za sirovinu; dok se ne povežu, radni nalog za
+  // proizvod se ne može obraditi.
+  bool get jePovezan => materialId != null;
 }
 
 class Artikal {
@@ -121,6 +127,12 @@ class Artikal {
   bool get jeObrisan => obrisan != null;
 
   int get brojNormativa => _brojNormativa ?? normativi.length;
+
+  // Lista ne mora vratiti bom_items_count; tada se broj zna tek iz detalja.
+  bool get poznatBrojNormativa =>
+      _brojNormativa != null || normativi.isNotEmpty;
+
+  bool get imaNepovezanihNormativa => normativi.any((n) => !n.jePovezan);
 
   double get cijenaNormativa =>
       cijena ?? normativi.fold<double>(0, (suma, n) => suma + n.iznos);

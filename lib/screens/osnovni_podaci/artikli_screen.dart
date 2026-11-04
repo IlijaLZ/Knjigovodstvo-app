@@ -29,14 +29,6 @@ String? _validirajObavezno(String? value) {
   return null;
 }
 
-String? _validirajCijenu(String? value) {
-  if (value == null || value.trim().isEmpty) return 'Obavezno polje';
-  final broj = double.tryParse(value.trim().replaceAll(',', '.'));
-  if (broj == null) return 'Unesite ispravan broj';
-  if (broj < 0) return 'Ne može biti negativna';
-  return null;
-}
-
 String? _validirajKolicinu(String? value) {
   if (value == null || value.trim().isEmpty) return 'Obavezno polje';
   final broj = double.tryParse(value.trim().replaceAll(',', '.'));
@@ -620,8 +612,39 @@ class _NormativiTabela extends StatelessWidget {
         rows: [
           ...normativi.map((n) {
             return DataRow(
+              color: n.jePovezan
+                  ? null
+                  : WidgetStateProperty.all(Colors.orange.shade50),
               cells: [
-                DataCell(Text(n.naziv)),
+                DataCell(
+                  n.jePovezan
+                      ? Text(n.naziv)
+                      : Tooltip(
+                          message:
+                              'Stavka nije povezana sa sirovinom. '
+                              'Izaberite sirovinu preko izmjene stavke.',
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.link_off,
+                                size: 18,
+                                color: Colors.orange.shade800,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(n.naziv.isEmpty ? '—' : n.naziv),
+                              const SizedBox(width: 6),
+                              Text(
+                                '(nepovezano)',
+                                style: TextStyle(
+                                  color: Colors.orange.shade800,
+                                  fontStyle: FontStyle.italic,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                ),
                 DataCell(Text('${_format(n.cijena)} €')),
                 DataCell(Text(_formatKolicina(n.kolicina))),
                 DataCell(Text(n.jm)),
@@ -633,9 +656,16 @@ class _NormativiTabela extends StatelessWidget {
                       children: [
                         if (onIzmijeni != null)
                           IconButton(
-                            tooltip: 'Izmijeni količinu',
+                            tooltip: n.jePovezan
+                                ? 'Izmijeni stavku'
+                                : 'Poveži sa sirovinom',
                             onPressed: () => onIzmijeni!(n),
-                            icon: const Icon(Icons.edit_outlined),
+                            icon: Icon(
+                              n.jePovezan ? Icons.edit_outlined : Icons.link,
+                              color: n.jePovezan
+                                  ? null
+                                  : Colors.orange.shade800,
+                            ),
                           ),
                         if (onObrisi != null)
                           IconButton(
@@ -666,17 +696,223 @@ class _NormativiTabela extends StatelessWidget {
 }
 
 // ======================================================================
-// UNOS STAVKE NORMATIVA: naziv, cijena, količina i JM; iznos se računa
-// kao cijena × količina. onDodaj vraća true kad je stavka prihvaćena, pa
-// se polja prazne.
+// POLJE ZA IZBOR SIROVINE: prikazuje izabranu sirovinu, a klik otvara
+// pretragu repromaterijala (_IzborSirovineDialog).
+// ======================================================================
+class _SirovinaPolje extends StatelessWidget {
+  final int firmaId;
+  final String? naziv;
+  final Set<int> zauzete;
+  final String? errorText;
+  final bool enabled;
+  final ValueChanged<Artikal> onIzaberi;
+
+  const _SirovinaPolje({
+    required this.firmaId,
+    required this.naziv,
+    required this.onIzaberi,
+    this.zauzete = const {},
+    this.errorText,
+    this.enabled = true,
+  });
+
+  Future<void> _otvori(BuildContext context) async {
+    final sirovina = await showDialog<Artikal>(
+      context: context,
+      builder: (_) => _IzborSirovineDialog(firmaId: firmaId, zauzete: zauzete),
+    );
+    if (sirovina != null) onIzaberi(sirovina);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: enabled ? () => _otvori(context) : null,
+      borderRadius: BorderRadius.circular(8),
+      child: InputDecorator(
+        isEmpty: naziv == null,
+        decoration: _decoration('Sirovina').copyWith(
+          errorText: errorText,
+          enabled: enabled,
+          suffixIcon: const Icon(Icons.search),
+        ),
+        child: Text(naziv ?? '', overflow: TextOverflow.ellipsis),
+      ),
+    );
+  }
+}
+
+// ======================================================================
+// DIJALOG: izbor sirovine za stavku normativa
+// GET /companies/{company}/articles?type=raw_material&search=...&per_page=20
+// Sirovine koje su već u normativu se ne mogu ponovo izabrati.
+// ======================================================================
+class _IzborSirovineDialog extends StatefulWidget {
+  final int firmaId;
+  final Set<int> zauzete;
+
+  const _IzborSirovineDialog({required this.firmaId, this.zauzete = const {}});
+
+  @override
+  State<_IzborSirovineDialog> createState() => _IzborSirovineDialogState();
+}
+
+class _IzborSirovineDialogState extends State<_IzborSirovineDialog> {
+  final ArticlesService _service = ArticlesService();
+  final pretragaController = TextEditingController();
+
+  List<Artikal> _rezultati = [];
+  bool _ucitavanje = false;
+  String? _greska;
+  Timer? _timer;
+  int _zahtjev = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _trazi();
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    pretragaController.dispose();
+    super.dispose();
+  }
+
+  void _promjenaPretrage(String _) {
+    _timer?.cancel();
+    _timer = Timer(const Duration(milliseconds: 350), _trazi);
+  }
+
+  Future<void> _trazi() async {
+    final zahtjev = ++_zahtjev;
+    setState(() {
+      _ucitavanje = true;
+      _greska = null;
+    });
+
+    try {
+      final sirovine = await _service.fetchMaterials(
+        widget.firmaId,
+        search: pretragaController.text,
+      );
+      if (!mounted || zahtjev != _zahtjev) return;
+      setState(() => _rezultati = sirovine);
+    } on ApiException catch (e) {
+      if (!mounted || zahtjev != _zahtjev) return;
+      setState(() {
+        _rezultati = [];
+        _greska = e.message;
+      });
+    } finally {
+      if (mounted && zahtjev == _zahtjev) {
+        setState(() => _ucitavanje = false);
+      }
+    }
+  }
+
+  Widget _lista() {
+    if (_greska != null) {
+      return Padding(
+        padding: const EdgeInsets.all(16),
+        child: Text(_greska!, style: TextStyle(color: Colors.grey.shade700)),
+      );
+    }
+    if (!_ucitavanje && _rezultati.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.all(16),
+        child: Text(
+          'Nema sirovina.',
+          style: TextStyle(color: Colors.grey.shade700),
+        ),
+      );
+    }
+
+    return ListView.builder(
+      shrinkWrap: true,
+      itemCount: _rezultati.length,
+      itemBuilder: (context, index) {
+        final sirovina = _rezultati[index];
+        final zauzeta = widget.zauzete.contains(sirovina.id);
+
+        return ListTile(
+          dense: true,
+          enabled: !zauzeta,
+          title: Text('${sirovina.sifra} — ${sirovina.naziv}'),
+          subtitle: Text(
+            [
+              if (sirovina.cijena != null)
+                '${_format(sirovina.cijena!)} € / ${sirovina.jm}'
+              else
+                sirovina.jm,
+              if (zauzeta) 'već u normativu',
+            ].join(' · '),
+          ),
+          onTap: () => Navigator.of(context).pop(sirovina),
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: Colors.white,
+      title: const Text('Izaberi sirovinu'),
+      content: SizedBox(
+        width: 480,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: pretragaController,
+              autofocus: true,
+              onChanged: _promjenaPretrage,
+              decoration: const InputDecoration(
+                labelText: 'Pretraga sirovina (šifra ili naziv)',
+                prefixIcon: Icon(Icons.search),
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 4,
+              child: _ucitavanje ? const LinearProgressIndicator() : null,
+            ),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 320),
+              child: _lista(),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Odustani'),
+        ),
+      ],
+    );
+  }
+}
+
+// ======================================================================
+// UNOS STAVKE NORMATIVA: sirovina i količina. Naziv, cijenu i JM server
+// preuzima od sirovine; ovdje se prikazuju samo informativno. onDodaj
+// vraća true kad je stavka prihvaćena, pa se polja prazne.
 // ======================================================================
 class _NormativUnos extends StatefulWidget {
+  final int firmaId;
+  final Set<int> zauzete;
   final bool enabled;
   final String dugme;
   final Future<bool> Function(Normativ) onDodaj;
 
   const _NormativUnos({
+    required this.firmaId,
     required this.onDodaj,
+    this.zauzete = const {},
     this.enabled = true,
     this.dugme = 'Dodaj normativ',
   });
@@ -687,26 +923,23 @@ class _NormativUnos extends StatefulWidget {
 
 class _NormativUnosState extends State<_NormativUnos> {
   final _formKey = GlobalKey<FormState>();
-  final nazivController = TextEditingController();
-  final cijenaController = TextEditingController();
   final kolicinaController = TextEditingController();
-  String _jm = jmIzApi('pcs');
+  Artikal? _sirovina;
+  String? _greskaSirovine;
 
-  double get _iznos =>
-      _parse(cijenaController.text) * _parse(kolicinaController.text);
+  double get _cijena => _sirovina?.cijena ?? 0;
+
+  double get _iznos => _cijena * _parse(kolicinaController.text);
 
   @override
   void initState() {
     super.initState();
     // Iznos se osvježava dok korisnik kuca.
-    cijenaController.addListener(_osvjezi);
     kolicinaController.addListener(_osvjezi);
   }
 
   @override
   void dispose() {
-    nazivController.dispose();
-    cijenaController.dispose();
     kolicinaController.dispose();
     super.dispose();
   }
@@ -714,26 +947,39 @@ class _NormativUnosState extends State<_NormativUnos> {
   void _osvjezi() => setState(() {});
 
   Future<void> _dodaj() async {
-    if (!widget.enabled || !_formKey.currentState!.validate()) return;
+    if (!widget.enabled) return;
+
+    final sirovina = _sirovina;
+    setState(() {
+      _greskaSirovine = sirovina == null
+          ? 'Izaberite sirovinu'
+          : widget.zauzete.contains(sirovina.id)
+          ? 'Sirovina je već u normativu'
+          : null;
+    });
+
+    final kolicinaOk = _formKey.currentState!.validate();
+    if (sirovina == null || _greskaSirovine != null || !kolicinaOk) return;
 
     final dodato = await widget.onDodaj(
       Normativ(
-        naziv: nazivController.text.trim(),
-        cijena: _parse(cijenaController.text),
+        materialId: sirovina.id,
+        naziv: sirovina.naziv,
+        cijena: _cijena,
         kolicina: _parse(kolicinaController.text),
-        jm: _jm,
+        jm: sirovina.jm,
       ),
     );
 
     if (!dodato || !mounted) return;
-    nazivController.clear();
-    cijenaController.clear();
+    setState(() => _sirovina = null);
     kolicinaController.clear();
   }
 
   @override
   Widget build(BuildContext context) {
     const broj = TextInputType.numberWithOptions(decimal: true);
+    final sirovina = _sirovina;
 
     return Form(
       key: _formKey,
@@ -743,48 +989,43 @@ class _NormativUnosState extends State<_NormativUnos> {
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
           SizedBox(
-            width: 240,
-            child: TextFormField(
-              controller: nazivController,
-              maxLength: 255,
-              decoration: _decoration('Naziv').copyWith(counterText: ''),
-              validator: _validirajObavezno,
-              onFieldSubmitted: (_) => _dodaj(),
+            width: 300,
+            child: _SirovinaPolje(
+              firmaId: widget.firmaId,
+              naziv: sirovina == null
+                  ? null
+                  : '${sirovina.sifra} — ${sirovina.naziv}',
+              zauzete: widget.zauzete,
+              enabled: widget.enabled,
+              errorText: _greskaSirovine,
+              onIzaberi: (s) => setState(() {
+                _sirovina = s;
+                _greskaSirovine = null;
+              }),
             ),
           ),
           SizedBox(
-            width: 120,
-            child: TextFormField(
-              controller: cijenaController,
-              keyboardType: broj,
-              inputFormatters: [_decimalFormatter],
-              decoration: _decoration('Cijena', suffixText: '€'),
-              validator: _validirajCijenu,
-              onFieldSubmitted: (_) => _dodaj(),
-            ),
-          ),
-          SizedBox(
-            width: 120,
+            width: 140,
             child: TextFormField(
               controller: kolicinaController,
+              enabled: widget.enabled,
               keyboardType: broj,
               inputFormatters: [_decimalFormatter],
-              decoration: _decoration('Količina'),
+              decoration: _decoration('Količina', suffixText: sirovina?.jm),
               validator: _validirajKolicinu,
               onFieldSubmitted: (_) => _dodaj(),
             ),
           ),
           SizedBox(
-            width: 110,
-            child: DropdownButtonFormField<String>(
-              initialValue: _jm,
-              decoration: _decoration('JM'),
-              items: _jediniceMjere
-                  .map((jm) => DropdownMenuItem(value: jm, child: Text(jm)))
-                  .toList(),
-              onChanged: (v) {
-                if (v != null) setState(() => _jm = v);
-              },
+            width: 130,
+            child: InputDecorator(
+              decoration: _decoration(
+                'Cijena',
+                suffixText: '€',
+              ).copyWith(fillColor: Colors.grey.shade200),
+              child: Text(
+                sirovina?.cijena == null ? '—' : _format(sirovina!.cijena!),
+              ),
             ),
           ),
           SizedBox(
@@ -1048,7 +1289,11 @@ class _ArtikalDialogState extends State<_ArtikalDialog> {
 
                         const SizedBox(height: 16),
 
-                        _NormativUnos(onDodaj: _dodajNormativ),
+                        _NormativUnos(
+                          firmaId: widget.firmaId,
+                          zauzete: _normativi.map((n) => n.materialId!).toSet(),
+                          onDodaj: _dodajNormativ,
+                        ),
 
                         const SizedBox(height: 16),
 
@@ -1197,70 +1442,45 @@ class _NormativiDialogState extends State<_NormativiDialog> {
       await _service.addBomItem(
         widget.firmaId,
         _artikalId,
-        name: normativ.naziv,
-        price: normativ.cijena,
+        materialId: normativ.materialId!,
         quantity: normativ.kolicina,
-        unitOfMeasure: normativ.jm,
       );
       _zadnjaObrisana = null;
     });
   }
 
+  // Izmjena sirovine i/ili količine; šalju se samo izmijenjena polja.
+  // Nepovezana stavka se ovako veže za sirovinu.
   Future<void> _izmijeni(Normativ normativ) async {
-    final controller = TextEditingController(
-      text: _formatKolicina(normativ.kolicina),
-    );
-    final formKey = GlobalKey<FormState>();
-
-    final kolicina = await showDialog<double>(
+    final izmjena = await showDialog<_IzmjenaStavke>(
       context: context,
-      builder: (context) {
-        void potvrdi() {
-          if (formKey.currentState!.validate()) {
-            Navigator.pop(context, _parse(controller.text));
-          }
-        }
-
-        return AlertDialog(
-          title: Text('Količina: ${normativ.naziv}'),
-          content: Form(
-            key: formKey,
-            child: TextFormField(
-              controller: controller,
-              autofocus: true,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-              ),
-              inputFormatters: [_decimalFormatter],
-              decoration: _decoration('Količina', suffixText: normativ.jm),
-              validator: _validirajKolicinu,
-              onFieldSubmitted: (_) => potvrdi(),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Odustani'),
-            ),
-            ElevatedButton(onPressed: potvrdi, child: const Text('Sačuvaj')),
-          ],
-        );
-      },
+      builder: (_) => _IzmjenaStavkeDialog(
+        firmaId: widget.firmaId,
+        normativ: normativ,
+        zauzete: _zauzete..remove(normativ.materialId),
+      ),
     );
 
-    controller.dispose();
+    if (izmjena == null || !mounted) return;
 
-    if (kolicina == null || kolicina == normativ.kolicina || !mounted) return;
+    final materialId = izmjena.sirovina?.id;
+    final novaSirovina =
+        materialId != null && materialId != normativ.materialId;
+    final novaKolicina = izmjena.kolicina != normativ.kolicina;
+    if (!novaSirovina && !novaKolicina) return;
 
     _izvrsi(
       () => _service.updateBomItem(
         widget.firmaId,
         _artikalId,
         normativ.id!,
-        quantity: kolicina,
+        materialId: novaSirovina ? materialId : null,
+        quantity: novaKolicina ? izmjena.kolicina : null,
       ),
     );
   }
+
+  Set<int> get _zauzete => _normativi.map((n) => n.materialId).nonNulls.toSet();
 
   void _obrisi(Normativ normativ) {
     _izvrsi(() async {
@@ -1305,6 +1525,31 @@ class _NormativiDialogState extends State<_NormativiDialog> {
                   onObrisi: uredjivanje ? _obrisi : null,
                 ),
 
+              if (!_ucitavanje && _normativi.any((n) => !n.jePovezan))
+                Container(
+                  margin: const EdgeInsets.only(top: 12),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.shade50,
+                    border: Border.all(color: Colors.orange.shade200),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.link_off, color: Colors.orange.shade800),
+                      const SizedBox(width: 10),
+                      const Flexible(
+                        child: Text(
+                          'Neke stavke nisu povezane sa sirovinom. Kliknite '
+                          'ikonicu za povezivanje i izaberite sirovinu — dok '
+                          'se ne povežu, radni nalog za ovaj proizvod se ne '
+                          'može obraditi.',
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
               if (_zadnjaObrisana != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
@@ -1335,6 +1580,8 @@ class _NormativiDialogState extends State<_NormativiDialog> {
 
               const SizedBox(height: 20),
               _NormativUnos(
+                firmaId: widget.firmaId,
+                zauzete: _zauzete,
                 enabled: uredjivanje,
                 dugme: 'Dodaj stavku',
                 onDodaj: _dodaj,
@@ -1348,6 +1595,128 @@ class _NormativiDialogState extends State<_NormativiDialog> {
           onPressed: () => Navigator.pop(context, _izmijenjeno),
           child: const Text('Zatvori'),
         ),
+      ],
+    );
+  }
+}
+
+// Rezultat izmjene stavke normativa: izabrana sirovina (null = ista) i
+// količina.
+typedef _IzmjenaStavke = ({Artikal? sirovina, double kolicina});
+
+// ======================================================================
+// POP UP: IZMJENA STAVKE NORMATIVA
+// Sirovina je preselektovana (material_id); stara stavka bez sirovine mora
+// dobiti sirovinu prije čuvanja.
+// ======================================================================
+class _IzmjenaStavkeDialog extends StatefulWidget {
+  final int firmaId;
+  final Normativ normativ;
+  final Set<int> zauzete;
+
+  const _IzmjenaStavkeDialog({
+    required this.firmaId,
+    required this.normativ,
+    this.zauzete = const {},
+  });
+
+  @override
+  State<_IzmjenaStavkeDialog> createState() => _IzmjenaStavkeDialogState();
+}
+
+class _IzmjenaStavkeDialogState extends State<_IzmjenaStavkeDialog> {
+  final _formKey = GlobalKey<FormState>();
+  late final kolicinaController = TextEditingController(
+    text: _formatKolicina(widget.normativ.kolicina),
+  );
+  Artikal? _sirovina;
+  String? _greskaSirovine;
+
+  Normativ get _normativ => widget.normativ;
+
+  @override
+  void dispose() {
+    kolicinaController.dispose();
+    super.dispose();
+  }
+
+  void _potvrdi() {
+    setState(() {
+      _greskaSirovine = !_normativ.jePovezan && _sirovina == null
+          ? 'Izaberite sirovinu'
+          : null;
+    });
+    if (!_formKey.currentState!.validate() || _greskaSirovine != null) return;
+
+    Navigator.pop<_IzmjenaStavke>(context, (
+      sirovina: _sirovina,
+      kolicina: _parse(kolicinaController.text),
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final sirovina = _sirovina;
+    final naziv = sirovina != null
+        ? '${sirovina.sifra} — ${sirovina.naziv}'
+        : _normativ.jePovezan
+        ? _normativ.naziv
+        : null;
+
+    return AlertDialog(
+      title: Text(
+        _normativ.jePovezan ? 'Izmijeni stavku' : 'Poveži stavku sa sirovinom',
+      ),
+      content: SizedBox(
+        width: 420,
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (!_normativ.jePovezan && _normativ.naziv.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Text(
+                    'Stari naziv stavke: ${_normativ.naziv}',
+                    style: TextStyle(color: Colors.grey.shade700),
+                  ),
+                ),
+              _SirovinaPolje(
+                firmaId: widget.firmaId,
+                naziv: naziv,
+                zauzete: widget.zauzete,
+                errorText: _greskaSirovine,
+                onIzaberi: (s) => setState(() {
+                  _sirovina = s;
+                  _greskaSirovine = null;
+                }),
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: kolicinaController,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                inputFormatters: [_decimalFormatter],
+                decoration: _decoration(
+                  'Količina',
+                  suffixText: sirovina?.jm ?? _normativ.jm,
+                ),
+                validator: _validirajKolicinu,
+                onFieldSubmitted: (_) => _potvrdi(),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Odustani'),
+        ),
+        ElevatedButton(onPressed: _potvrdi, child: const Text('Sačuvaj')),
       ],
     );
   }

@@ -5,7 +5,6 @@ import 'package:get/get.dart';
 import 'package:knjigovodstvo_app/controllers/firma_controller.dart';
 import 'package:knjigovodstvo_app/models/auth_models.dart';
 import 'package:knjigovodstvo_app/models/work_order.dart';
-import 'package:knjigovodstvo_app/screens/dokumenta/radni_nalog/radni_nalog_screen.dart';
 import 'package:knjigovodstvo_app/services/work_orders_service.dart';
 import 'package:knjigovodstvo_app/widgets/paginacija_widget.dart';
 
@@ -47,8 +46,6 @@ class _TrebovanjeScreenState extends State<TrebovanjeScreen> {
   List<RadniNalog> nalozi = [];
   bool _ucitavanje = false;
   String? _greska;
-
-  String? _status;
 
   int _stranica = 1;
   int _zadnjaStranica = 1;
@@ -116,7 +113,6 @@ class _TrebovanjeScreenState extends State<TrebovanjeScreen> {
         firma.id,
         page: stranica,
         search: _pretraga,
-        status: _status,
       );
       if (!mounted || zahtjev != _zahtjev) return;
       setState(() {
@@ -176,20 +172,6 @@ class _TrebovanjeScreenState extends State<TrebovanjeScreen> {
             ),
           ),
         ),
-        const SizedBox(width: 16),
-        SegmentedButton<String?>(
-          showSelectedIcon: false,
-          segments: const [
-            ButtonSegment(value: null, label: Text('Sva')),
-            ButtonSegment(value: statusNacrt, label: Text('U pripremi')),
-            ButtonSegment(value: statusIzdat, label: Text('Izdata')),
-          ],
-          selected: {_status},
-          onSelectionChanged: (izbor) {
-            setState(() => _status = izbor.first);
-            _ucitaj();
-          },
-        ),
       ],
     );
   }
@@ -221,7 +203,6 @@ class _TrebovanjeScreenState extends State<TrebovanjeScreen> {
         _kolona('Izdaje'),
         _kolona('Prima'),
         _kolona('Broj stavki', numeric: true),
-        _kolona('Status'),
         _kolona('Akcije'),
       ],
       rows: List.generate(nalozi.length, (index) {
@@ -238,7 +219,6 @@ class _TrebovanjeScreenState extends State<TrebovanjeScreen> {
             DataCell(Text(nalog.izvor?.naziv ?? '')),
             DataCell(Text(nalog.odrediste?.naziv ?? '')),
             DataCell(Text('${nalog.brojStavki}')),
-            DataCell(statusNaloga(nalog)),
             DataCell(
               IconButton(
                 tooltip: 'Pregled',
@@ -560,7 +540,6 @@ class _TrebovanjeDialogState extends State<_TrebovanjeDialog> {
               _podatak('Kupac', trebovanje.kupac ?? nalog.kupac ?? ''),
               _podatak('Izdaje', nalog.izvor?.naziv ?? ''),
               _podatak('Prima', nalog.odrediste?.naziv ?? ''),
-              _podatak('Status', nazivStatusa(nalog.status)),
               _podatak(
                 'Vrijednost',
                 vrijednost == null

@@ -16,9 +16,7 @@ class _KalkulacijaNabavnihCijenaScreenState
 
   final int totalPages = 3;
 
-  final List<Map<String, String>> dokumenti = [
-    
-  ];
+  final List<Map<String, String>> dokumenti = [];
 
   @override
   Widget build(BuildContext context) {

@@ -28,8 +28,15 @@ class FirmaController extends GetxController {
     try {
       firme.assignAll(await _service.fetchCompanies());
 
-      if (!firme.contains(izabranaFirma.value)) {
+      // Firme su jednake po id-u, pa se izmijenjena izabrana firma
+      // (npr. novi naziv) mora postaviti sa trigger da bi se prikaz osvježio.
+      final stara = izabranaFirma.value;
+      final nova = firme.where((f) => f == stara).firstOrNull;
+
+      if (nova == null) {
         izabranaFirma.value = firme.firstOrNull;
+      } else if (nova.name != stara!.name) {
+        izabranaFirma.trigger(nova);
       }
     } on ApiException catch (e) {
       errorMessage.value = e.message;

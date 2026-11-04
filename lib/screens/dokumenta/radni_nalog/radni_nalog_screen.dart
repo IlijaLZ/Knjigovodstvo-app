@@ -22,25 +22,6 @@ void _poruka(BuildContext context, String tekst, {SnackBarAction? action}) {
     ..showSnackBar(SnackBar(content: Text(tekst), action: action));
 }
 
-// Oznaka statusa naloga (u pripremi / izdat).
-Widget statusNaloga(RadniNalog nalog) {
-  final izdat = nalog.jeIzdat;
-  final boja = izdat ? Colors.green : Colors.orange;
-
-  return Container(
-    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-    decoration: BoxDecoration(
-      color: boja.shade50,
-      borderRadius: BorderRadius.circular(12),
-      border: Border.all(color: boja.shade200),
-    ),
-    child: Text(
-      nazivStatusa(nalog.status),
-      style: TextStyle(color: boja.shade800, fontWeight: FontWeight.w600),
-    ),
-  );
-}
-
 // Lista radnih naloga izabrane firme: GET /companies/{company}/work-orders
 class RadniNalogScreen extends StatefulWidget {
   const RadniNalogScreen({super.key});
@@ -59,9 +40,6 @@ class _RadniNalogScreenState extends State<RadniNalogScreen> {
   List<RadniNalog> nalozi = [];
   bool _ucitavanje = false;
   String? _greska;
-
-  // null = svi statusi.
-  String? _status;
 
   int _stranica = 1;
   int _zadnjaStranica = 1;
@@ -131,7 +109,6 @@ class _RadniNalogScreenState extends State<RadniNalogScreen> {
         firma.id,
         page: stranica,
         search: _pretraga,
-        status: _status,
       );
       if (!mounted || zahtjev != _zahtjev) return;
       setState(() {
@@ -282,20 +259,6 @@ class _RadniNalogScreenState extends State<RadniNalogScreen> {
             ),
           ),
         ),
-        const SizedBox(width: 16),
-        SegmentedButton<String?>(
-          showSelectedIcon: false,
-          segments: const [
-            ButtonSegment(value: null, label: Text('Svi')),
-            ButtonSegment(value: statusNacrt, label: Text('U pripremi')),
-            ButtonSegment(value: statusIzdat, label: Text('Izdati')),
-          ],
-          selected: {_status},
-          onSelectionChanged: (izbor) {
-            setState(() => _status = izbor.first);
-            _ucitaj();
-          },
-        ),
       ],
     );
   }
@@ -327,7 +290,6 @@ class _RadniNalogScreenState extends State<RadniNalogScreen> {
         _kolona('Izdao'),
         _kolona('Potpisao'),
         _kolona('Broj stavki', numeric: true),
-        _kolona('Status'),
         _kolona('Akcije'),
       ],
       rows: List.generate(nalozi.length, (index) {
@@ -343,7 +305,6 @@ class _RadniNalogScreenState extends State<RadniNalogScreen> {
             DataCell(Text(nalog.izdao ?? '')),
             DataCell(Text(nalog.potpisao ?? '')),
             DataCell(Text('${nalog.brojStavki}')),
-            DataCell(statusNaloga(nalog)),
             DataCell(
               Row(
                 children: [

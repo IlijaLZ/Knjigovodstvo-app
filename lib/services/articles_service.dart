@@ -78,6 +78,19 @@ class ArticlesService {
     );
   }
 
+  // Sirovine za izbor u stavci normativa: samo aktivni repromaterijal iste
+  // firme (server druge odbija sa 422).
+  // GET /companies/{company}/articles?type=raw_material&search=...&per_page=20
+  Future<List<Artikal>> fetchMaterials(int companyId, {String? search}) async {
+    final stranica = await fetchArticles(
+      companyId,
+      type: tipRepromaterijal,
+      search: search,
+      perPage: 20,
+    );
+    return stranica.artikli.where((a) => !a.jeObrisan).toList();
+  }
+
   // GET /companies/{company}/articles/{article} — gotov proizvod dolazi sa
   // stavkama normativa.
   Future<Artikal> fetchArticle(int companyId, int articleId) async {
@@ -86,8 +99,8 @@ class ArticlesService {
   }
 
   // POST /companies/{company}/articles
-  // Gotov proizvod se kreira zajedno sa normativom (naziv, cijena, količina
-  // i JM svake stavke).
+  // Gotov proizvod se kreira zajedno sa normativom (1–200 stavki, sirovina i
+  // količina; ista sirovina se ne smije ponoviti).
   Future<Artikal> createArticle(
     int companyId, {
     required String type,
@@ -160,42 +173,30 @@ class ArticlesService {
   Future<Normativ> addBomItem(
     int companyId,
     int articleId, {
-    required String name,
-    required double price,
+    required int materialId,
     required double quantity,
-    required String unitOfMeasure,
   }) async {
-    final body = await _client.post(
-      _normativi(companyId, articleId),
-      _stavka(
-        Normativ(
-          naziv: name,
-          cijena: price,
-          kolicina: quantity,
-          jm: unitOfMeasure,
-        ),
-      ),
-    );
+    final body = await _client.post(_normativi(companyId, articleId), {
+      'material_id': materialId,
+      'quantity': quantity,
+    });
     return _normativIz(body);
   }
 
   // PATCH /companies/{company}/articles/{article}/bom-items/{bomItem}
+  // Šalje se sirovina, količina ili oboje; ovako se i stara (nepovezana)
+  // stavka veže za sirovinu.
   Future<Normativ> updateBomItem(
     int companyId,
     int articleId,
     int bomItemId, {
-    String? name,
-    double? price,
+    int? materialId,
     double? quantity,
-    String? unitOfMeasure,
   }) async {
-    final body = await _client
-        .patch('${_normativi(companyId, articleId)}/$bomItemId', {
-          'name': ?name,
-          'price': ?price,
-          'quantity': ?quantity,
-          if (unitOfMeasure != null) 'unit_of_measure': jmZaApi(unitOfMeasure),
-        });
+    final body = await _client.patch(
+      '${_normativi(companyId, articleId)}/$bomItemId',
+      {'material_id': ?materialId, 'quantity': ?quantity},
+    );
     return _normativIz(body);
   }
 
@@ -223,12 +224,11 @@ class ArticlesService {
   String _normativi(int companyId, int articleId) =>
       '${_artikal(companyId, articleId)}/bom-items';
 
-  // Stavka normativa se unosi ručno: naziv, cijena, količina i JM.
+  // Stavka normativa je sirovina i količina; naziv, cijenu i JM server
+  // preuzima od sirovine.
   Map<String, dynamic> _stavka(Normativ n) => {
-    'name': n.naziv,
-    'price': n.cijena,
+    'material_id': n.materialId,
     'quantity': n.kolicina,
-    'unit_of_measure': jmZaApi(n.jm),
   };
 
   Artikal _artikalIz(Map<String, dynamic> body) =>

@@ -7,7 +7,6 @@ import 'package:knjigovodstvo_app/controllers/firma_controller.dart';
 import 'package:knjigovodstvo_app/models/article.dart';
 import 'package:knjigovodstvo_app/models/auth_models.dart';
 import 'package:knjigovodstvo_app/models/work_order.dart';
-import 'package:knjigovodstvo_app/screens/dokumenta/radni_nalog/radni_nalog_screen.dart';
 import 'package:knjigovodstvo_app/services/articles_service.dart';
 import 'package:knjigovodstvo_app/services/work_orders_service.dart';
 import 'package:knjigovodstvo_app/widgets/input_widget.dart';
@@ -777,15 +776,9 @@ class _DodajRadniNalogState extends State<DodajRadniNalog> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Text(
-              _nalog == null ? 'Radni nalog' : 'Radni nalog ${_nalog!.broj}',
-              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(width: 16),
-            if (_nalog != null) statusNaloga(_nalog!),
-          ],
+        Text(
+          _nalog == null ? 'Radni nalog' : 'Radni nalog ${_nalog!.broj}',
+          style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w600),
         ),
         if (_samoPregled) ...[
           const SizedBox(height: 12),
@@ -993,7 +986,8 @@ class _DodajRadniNalogState extends State<DodajRadniNalog> {
 
 // ======================================================================
 // DIJALOG: izbor gotovog proizvoda (sa normativom) i količine
-// GET /companies/{company}/work-orders/articles
+// GET /companies/{company}/articles?type=finished_product&search=...
+// Normativ izabranog proizvoda: GET /companies/{company}/articles/{article}
 // ======================================================================
 class _DodajArtikalDialog extends StatefulWidget {
   final int firmaId;
@@ -1005,13 +999,14 @@ class _DodajArtikalDialog extends StatefulWidget {
 }
 
 class _DodajArtikalDialogState extends State<_DodajArtikalDialog> {
-  final WorkOrdersService _service = WorkOrdersService();
+  final ArticlesService _service = ArticlesService();
   final pretragaController = TextEditingController();
   final kolicinaController = TextEditingController(text: '1');
 
   List<Artikal> _rezultati = [];
   Artikal? _artikal;
   bool _ucitavanje = false;
+  bool _ucitavanjeNormativa = false;
   String? _greska;
   Timer? _timer;
   int _zahtjev = 0;
@@ -1043,20 +1038,30 @@ class _DodajArtikalDialogState extends State<_DodajArtikalDialog> {
     });
 
     try {
-      final rezultati = await _service.searchProducts(
+      final stranica = await _service.fetchArticles(
         widget.firmaId,
+        type: tipGotovProizvod,
         search: pretragaController.text,
+        perPage: 20,
       );
       if (!mounted || zahtjev != _zahtjev) return;
-      setState(() => _rezultati = rezultati);
+      // Nalog se može otvoriti samo za proizvod koji ima normativ. Ako lista
+      // ne vrati broj stavki, proizvod ostaje, a normativ se provjerava pri
+      // izboru.
+      setState(
+        () => _rezultati = stranica.artikli
+            .where(
+              (a) =>
+                  !a.jeObrisan &&
+                  (!a.poznatBrojNormativa || a.brojNormativa > 0),
+            )
+            .toList(),
+      );
     } on ApiException catch (e) {
       if (!mounted || zahtjev != _zahtjev) return;
       setState(() {
         _rezultati = [];
-        // Server može tražiti pojam za pretragu.
-        _greska = e.statusCode == 422 && pretragaController.text.trim().isEmpty
-            ? 'Ukucajte šifru ili naziv proizvoda.'
-            : e.message;
+        _greska = e.message;
       });
     } finally {
       if (mounted && zahtjev == _zahtjev) {
@@ -1065,9 +1070,64 @@ class _DodajArtikalDialogState extends State<_DodajArtikalDialog> {
     }
   }
 
+  // Lista ne vraća stavke normativa, pa se izabrani proizvod učitava cio.
+  Future<void> _izaberi(Artikal artikal) async {
+    setState(() {
+      _artikal = artikal;
+      _ucitavanjeNormativa = artikal.normativi.isEmpty;
+    });
+    if (artikal.normativi.isNotEmpty) return;
+
+    try {
+      final pun = await _service.fetchArticle(widget.firmaId, artikal.id!);
+      if (!mounted || _artikal?.id != artikal.id) return;
+      if (pun.normativi.isEmpty) {
+        setState(() {
+          _artikal = null;
+          _ucitavanjeNormativa = false;
+          _rezultati.removeWhere((a) => a.id == artikal.id);
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Izabrani proizvod nema normativ.')),
+        );
+        return;
+      }
+      // Stare stavke bez sirovine (material_id) server ne može obraditi.
+      if (pun.imaNepovezanihNormativa) {
+        setState(() {
+          _artikal = null;
+          _ucitavanjeNormativa = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Normativ proizvoda ima stavke koje nisu povezane sa '
+              'sirovinom. Povežite ih u šifarniku artikala.',
+            ),
+          ),
+        );
+        return;
+      }
+      setState(() => _artikal = pun);
+    } on ApiException catch (e) {
+      if (!mounted || _artikal?.id != artikal.id) return;
+      setState(() {
+        _artikal = null;
+        _ucitavanjeNormativa = false;
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.message)));
+    } finally {
+      if (mounted && _artikal?.id == artikal.id) {
+        setState(() => _ucitavanjeNormativa = false);
+      }
+    }
+  }
+
   void _potvrdi() {
     final kolicina = _parse(kolicinaController.text);
-    if (_artikal == null || kolicina <= 0) return;
+    if (_artikal == null || _ucitavanjeNormativa || kolicina <= 0) return;
 
     Navigator.of(context).pop((_artikal!, kolicina));
   }
@@ -1102,10 +1162,16 @@ class _DodajArtikalDialogState extends State<_DodajArtikalDialog> {
           selectedTileColor: Colors.blue.shade50,
           title: Text('${artikal.sifra} — ${artikal.naziv}'),
           subtitle: Text(
-            '${artikal.brojNormativa} materijala · '
-            '${_format(artikal.cijenaNormativa)} € / ${artikal.jm}',
+            [
+              if (artikal.poznatBrojNormativa)
+                '${artikal.brojNormativa} materijala',
+              if (artikal.cijena != null)
+                '${_format(artikal.cijena!)} € / ${artikal.jm}',
+              if (!artikal.poznatBrojNormativa && artikal.cijena == null)
+                artikal.jm,
+            ].join(' · '),
           ),
-          onTap: () => setState(() => _artikal = artikal),
+          onTap: () => _izaberi(artikal),
         );
       },
     );
@@ -1134,7 +1200,9 @@ class _DodajArtikalDialogState extends State<_DodajArtikalDialog> {
             const SizedBox(height: 8),
             SizedBox(
               height: 4,
-              child: _ucitavanje ? const LinearProgressIndicator() : null,
+              child: _ucitavanje || _ucitavanjeNormativa
+                  ? const LinearProgressIndicator()
+                  : null,
             ),
             ConstrainedBox(
               constraints: const BoxConstraints(maxHeight: 280),
@@ -1160,7 +1228,7 @@ class _DodajArtikalDialogState extends State<_DodajArtikalDialog> {
           child: const Text('Odustani'),
         ),
         ElevatedButton(
-          onPressed: _artikal == null ? null : _potvrdi,
+          onPressed: _artikal == null || _ucitavanjeNormativa ? null : _potvrdi,
           child: const Text('Dodaj'),
         ),
       ],

@@ -66,4 +66,16 @@ class NavigationController extends GetxController {
   void openArtikliGotovihProizvoda() {
     selectedIndex.value = 16;
   }
+
+  void openDobavljaci() {
+    selectedIndex.value = 17;
+  }
+
+  void openKupci() {
+    selectedIndex.value = 18;
+  }
+
+  void openFirme() {
+    selectedIndex.value = 19;
+  }
 }

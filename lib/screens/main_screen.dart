@@ -8,7 +8,10 @@ import '../controllers/firma_controller.dart';
 import '../controllers/navigation_controller.dart';
 import '../models/article.dart';
 import '../models/company.dart';
+import '../models/partner.dart';
+import 'osnovni_podaci/firme_screen.dart';
 import 'osnovni_podaci/o_firmi_screen.dart';
+import 'osnovni_podaci/partneri_screen.dart';
 import 'osnovni_podaci/objekti/objekti_screen.dart';
 import 'osnovni_podaci/artikli_screen.dart';
 
@@ -57,6 +60,17 @@ class MainScreen extends StatelessWidget {
     const MagacinGotovihProizvoda(),
 
     const ArtikliScreen(key: ValueKey(tipGotovProizvod), tip: tipGotovProizvod),
+
+    const PartneriScreen(
+      key: ValueKey('suppliers'),
+      vrsta: VrstaPartnera.dobavljac,
+    ),
+    const PartneriScreen(
+      key: ValueKey('customers'),
+      vrsta: VrstaPartnera.kupac,
+    ),
+
+    const FirmeScreen(),
   ];
 
   @override
@@ -109,19 +123,22 @@ class MainScreen extends StatelessWidget {
                   controller.openKnjizenjeNaloga,
                 ),
 
-                _buildNavigationItem(
-                  'Stanje magacina repromaterijala',
-                  controller.openKarticaGlavneKnjige,
-                ),
-
-                _buildNavigationItem(
-                  'Stanje magacina proizvodnje u toku',
-                  controller.openStanjeMagacina,
-                ),
-
-                _buildNavigationItem(
-                  'Stanje magacina gotovih proizvoda',
-                  controller.openStanjeMagacina,
+                _buildDropdown(
+                  title: 'Stanja',
+                  items: [
+                    _MenuItem(
+                      title: 'Magacin repromaterijala',
+                      onTap: controller.openKarticaGlavneKnjige,
+                    ),
+                    _MenuItem(
+                      title: 'Magacin proizvodnje u toku',
+                      onTap: controller.openStanjeMagacina,
+                    ),
+                    _MenuItem(
+                      title: 'Magacin gotovih proizvoda',
+                      onTap: controller.openStanjeMagacina,
+                    ),
+                  ],
                 ),
 
                 // --------------------------------------------------
@@ -130,7 +147,7 @@ class MainScreen extends StatelessWidget {
                 Expanded(
                   child: Align(
                     alignment: Alignment.centerRight,
-                    child: _buildFirmaSelector(firmaController),
+                    child: _buildFirmaSelector(firmaController, controller),
                   ),
                 ),
               ],
@@ -195,7 +212,11 @@ class MainScreen extends StatelessWidget {
   }
 
   // Naziv izabrane firme + strelica; dropdown prikazuje ostale firme.
-  Widget _buildFirmaSelector(FirmaController firmaController) {
+  // Zadnja stavka otvara upravljanje firmama.
+  Widget _buildFirmaSelector(
+    FirmaController firmaController,
+    NavigationController navigationController,
+  ) {
     return Obx(() {
       final izabrana = firmaController.izabranaFirma.value;
       final ostale = firmaController.firme.where((f) => f != izabrana).toList();
@@ -213,21 +234,33 @@ class MainScreen extends StatelessWidget {
         onSelected: firmaController.izaberiFirmu,
 
         itemBuilder: (context) {
-          if (ostale.isEmpty) {
-            return const [
-              PopupMenuItem<Company>(
+          return [
+            if (ostale.isEmpty)
+              const PopupMenuItem<Company>(
                 enabled: false,
                 child: Text('Nema drugih firmi'),
               ),
-            ];
-          }
 
-          return ostale.map((firma) {
-            return PopupMenuItem<Company>(
-              value: firma,
-              child: Text(firma.name),
-            );
-          }).toList();
+            ...ostale.map((firma) {
+              return PopupMenuItem<Company>(
+                value: firma,
+                child: Text(firma.name),
+              );
+            }),
+
+            const PopupMenuDivider(),
+
+            PopupMenuItem<Company>(
+              onTap: navigationController.openFirme,
+              child: const Row(
+                children: [
+                  Icon(Icons.settings_outlined, size: 18),
+                  SizedBox(width: 8),
+                  Text('Upravljanje firmama'),
+                ],
+              ),
+            ),
+          ];
         },
 
         child: Container(
@@ -273,8 +306,8 @@ Widget _buildOsnovniPodaciMenu(NavigationController controller) {
   return MenuAnchor(
     menuChildren: [
       MenuItemButton(
-        onPressed: controller.openOFirmi,
-        child: const Text('O firmi'),
+        onPressed: controller.openFirme,
+        child: const Text('Firme'),
       ),
 
       SubmenuButton(
@@ -310,11 +343,11 @@ Widget _buildOsnovniPodaciMenu(NavigationController controller) {
         child: const Text('Glavna knjiga'),
       ),
       MenuItemButton(
-        onPressed: controller.openOFirmi,
+        onPressed: controller.openDobavljaci,
         child: const Text('Dobavljači'),
       ),
       MenuItemButton(
-        onPressed: controller.openOFirmi,
+        onPressed: controller.openKupci,
         child: const Text('Kupci'),
       ),
     ],

@@ -37,9 +37,7 @@ class _DodajKalkulacijuScreenState extends State<DodajKalkulacijuScreen> {
 
   String? _objekat;
   // Demo artikli
-  final List<Map<String, String>> artikli = [
-
-  ];
+  final List<Map<String, String>> artikli = [];
 
   @override
   void initState() {

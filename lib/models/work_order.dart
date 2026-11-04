@@ -4,12 +4,6 @@ import 'article.dart';
 const String statusNacrt = 'draft';
 const String statusIzdat = 'issued';
 
-String nazivStatusa(String status) => switch (status) {
-  statusNacrt => 'U pripremi',
-  statusIzdat => 'Izdat',
-  _ => status,
-};
-
 // API vraća iznose kao stringove ("200.0000"), a neke kao null.
 double? _broj(Object? value) =>
     value == null ? null : double.tryParse(value.toString());
@@ -53,10 +47,18 @@ class Skladiste {
     return Skladiste(
       id: json['id'] as int,
       tip: json['type'] as String,
-      naziv: json['name'] as String,
+      naziv: nazivSkladista(json['type'] as String, json['name'] as String),
     );
   }
 }
+
+// API vraća engleske nazive skladišta; prikazuju se po tipu, kao u meniju.
+String nazivSkladista(String tip, String naziv) => switch (tip) {
+  'raw_materials' => 'Magacin repromaterijala',
+  'production' => 'Proizvodnja u toku',
+  'finished_goods' => 'Magacin gotovih proizvoda',
+  _ => naziv,
+};
 
 // Jedan materijal trebovanja: stavka normativa pomnožena količinom proizvoda.
 class MaterijalTrebovanja {
