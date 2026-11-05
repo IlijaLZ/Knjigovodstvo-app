@@ -44,6 +44,10 @@ class _KalkulacijaNabavnihCijenaScreenState
   late final Worker _firmaWorker;
 
   List<Kalkulacija> kalkulacije = [];
+
+  // Nazivi artikala po kalkulaciji. Lista ne vraća stavke, pa se
+  // dohvataju iz detalja svake kalkulacije na stranici.
+  final Map<int, List<String>> _artikli = {};
   bool _ucitavanje = false;
   String? _greska;
 
@@ -119,12 +123,18 @@ class _KalkulacijaNabavnihCijenaScreenState
       if (!mounted || zahtjev != _zahtjev) return;
       setState(() {
         kalkulacije = rezultat.kalkulacije;
+        for (final k in rezultat.kalkulacije) {
+          if (k.stavke.isNotEmpty) {
+            _artikli[k.id] = k.stavke.map((s) => s.naziv).toList();
+          }
+        }
         _stranica = rezultat.stranica;
         _zadnjaStranica = rezultat.zadnjaStranica;
         _ukupno = rezultat.ukupno;
         _od = rezultat.od;
         _do = rezultat.doBroja;
       });
+      _ucitajArtikle(firma.id, rezultat.kalkulacije, zahtjev);
     } on ApiException catch (e) {
       if (!mounted || zahtjev != _zahtjev) return;
       setState(() => _greska = e.message);
@@ -242,6 +252,42 @@ class _KalkulacijaNabavnihCijenaScreenState
     _poruka(context, 'Kalkulacija ${_oznaka(kalkulacija)} je vraćena.');
   }
 
+  Future<void> _ucitajArtikle(
+    int firmaId,
+    List<Kalkulacija> lista,
+    int zahtjev,
+  ) async {
+    // Uvijek osvježi — stavke izmijenjene kalkulacije su se mogle promijeniti.
+    await Future.wait(
+      lista.where((k) => k.stavke.isEmpty).map((k) async {
+        try {
+          final detalj = await _service.fetchCalculation(firmaId, k.id);
+          if (!mounted || zahtjev != _zahtjev) return;
+          setState(() {
+            _artikli[k.id] = detalj.stavke.map((s) => s.naziv).toList();
+          });
+        } on ApiException {
+          // Kolona ostaje prazna za kalkulaciju koja se ne može učitati.
+        }
+      }),
+    );
+  }
+
+  Widget _celijaArtikala(Kalkulacija k) {
+    final nazivi = _artikli[k.id];
+    if (nazivi == null) {
+      return Text('…', style: TextStyle(color: Colors.grey.shade500));
+    }
+    final tekst = nazivi.join(', ');
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 260),
+      child: Tooltip(
+        message: nazivi.join('\n'),
+        child: Text(tekst, maxLines: 2, overflow: TextOverflow.ellipsis),
+      ),
+    );
+  }
+
   DataColumn _kolona(String naslov, {bool numeric = false}) {
     return DataColumn(
       numeric: numeric,
@@ -301,6 +347,7 @@ class _KalkulacijaNabavnihCijenaScreenState
         _kolona('RB'),
         _kolona('Datum'),
         _kolona('Dobavljač'),
+        _kolona('Naziv artikla'),
         _kolona('RC.BR'),
         _kolona('Prijemnica br'),
         _kolona('Objekat'),
@@ -318,6 +365,7 @@ class _KalkulacijaNabavnihCijenaScreenState
             DataCell(Text('${(_od ?? 1) + index}')),
             DataCell(Text(_formatDatum(k.datum))),
             DataCell(Text(k.dobavljac ?? '')),
+            DataCell(_celijaArtikala(k)),
             DataCell(Text(k.brojFakture)),
             DataCell(Text(k.brojPrijemnice)),
             DataCell(Text(k.skladiste?.naziv ?? '')),
