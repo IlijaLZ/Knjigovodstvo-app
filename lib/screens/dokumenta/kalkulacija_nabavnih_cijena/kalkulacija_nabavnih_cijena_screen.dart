@@ -56,9 +56,6 @@ class _KalkulacijaNabavnihCijenaScreenState
   Timer? _pretragaTimer;
   String _pretraga = '';
 
-  // null = sve, inače draft | booked.
-  String? _status;
-
   // Broj zadnjeg zahtjeva; stariji odgovori se ignorišu.
   int _zahtjev = 0;
 
@@ -118,7 +115,6 @@ class _KalkulacijaNabavnihCijenaScreenState
         firma.id,
         page: stranica,
         search: _pretraga,
-        status: _status,
       );
       if (!mounted || zahtjev != _zahtjev) return;
       setState(() {
@@ -278,43 +274,7 @@ class _KalkulacijaNabavnihCijenaScreenState
             ),
           ),
         ),
-        SegmentedButton<String?>(
-          showSelectedIcon: false,
-          segments: const [
-            ButtonSegment(value: null, label: Text('Sve')),
-            ButtonSegment(
-              value: statusKalkulacijeNacrt,
-              label: Text('U pripremi'),
-            ),
-            ButtonSegment(
-              value: statusKalkulacijeProknjizena,
-              label: Text('Proknjižene'),
-            ),
-          ],
-          selected: {_status},
-          onSelectionChanged: (izbor) {
-            setState(() => _status = izbor.first);
-            _ucitaj();
-          },
-        ),
       ],
-    );
-  }
-
-  Widget _statusZnacka(Kalkulacija k) {
-    final proknjizena = k.jeProknjizena;
-    final boja = proknjizena ? Colors.green : Colors.orange;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: boja.shade50,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: boja.shade200),
-      ),
-      child: Text(
-        proknjizena ? 'Proknjižena' : 'U pripremi',
-        style: TextStyle(color: boja.shade800, fontSize: 12),
-      ),
     );
   }
 
@@ -347,7 +307,6 @@ class _KalkulacijaNabavnihCijenaScreenState
         _kolona('Nabavna vrijednost', numeric: true),
         _kolona('Kalkulisao'),
         _kolona('Robu primio'),
-        _kolona('Status'),
         _kolona('Akcije'),
       ],
       rows: List.generate(kalkulacije.length, (index) {
@@ -365,7 +324,6 @@ class _KalkulacijaNabavnihCijenaScreenState
             DataCell(Text('${_format(k.rekapitulacija.nabavnaVrijednost)} €')),
             DataCell(Text(k.rekapitulacija.kalkulisao ?? '')),
             DataCell(Text(k.rekapitulacija.robuPrimio ?? '')),
-            DataCell(_statusZnacka(k)),
             DataCell(
               Row(
                 children: [

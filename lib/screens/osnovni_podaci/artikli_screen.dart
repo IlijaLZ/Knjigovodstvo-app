@@ -490,14 +490,13 @@ class _ArtikliScreenState extends State<ArtikliScreen> {
                                       style: boldText,
                                     ),
                                   ),
-                                DataColumn(
-                                  label: Text(
-                                    _gotovProizvod
-                                        ? 'Cijena po normativu'
-                                        : 'Prosječna nabavna cijena',
-                                    style: boldText,
+                                if (!_gotovProizvod)
+                                  const DataColumn(
+                                    label: Text(
+                                      'Prosječna nabavna cijena',
+                                      style: boldText,
+                                    ),
                                   ),
-                                ),
                                 const DataColumn(
                                   label: Text('Akcije', style: boldText),
                                 ),
@@ -512,16 +511,17 @@ class _ArtikliScreenState extends State<ArtikliScreen> {
                                       DataCell(
                                         Text('${artikal.brojNormativa}'),
                                       ),
-                                    DataCell(
-                                      Text(
-                                        _gotovProizvod || artikal.cijena != null
-                                            ? '${_format(artikal.cijenaNormativa)} €'
-                                            : '-',
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.w600,
+                                    if (!_gotovProizvod)
+                                      DataCell(
+                                        Text(
+                                          artikal.cijena != null
+                                              ? '${_format(artikal.cijenaNormativa)} €'
+                                              : '-',
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w600,
+                                          ),
                                         ),
                                       ),
-                                    ),
                                     DataCell(
                                       Row(
                                         children: [
