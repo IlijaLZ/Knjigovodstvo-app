@@ -26,7 +26,7 @@ class PartnersService {
   final ApiClient _client = ApiClient();
 
   // GET /companies/{company}/{vrsta}
-  // search: dio naziva ili početak JIB-a (server dozvoljava max 100 znakova).
+  // search: dio naziva ili početak PIB-a (server dozvoljava max 100 znakova).
   // trashed: 'with' uključuje obrisane, 'only' samo obrisane.
   Future<StranicaPartnera> fetchPartners(
     int companyId,

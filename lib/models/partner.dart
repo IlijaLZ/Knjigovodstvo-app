@@ -22,7 +22,7 @@ class VrstaPartnera {
 class Partner {
   final int id;
   final String naziv;
-  final String? jib;
+  final String? pib;
   final String? pdvBroj;
   final String? adresa;
   final String? grad;
@@ -33,7 +33,7 @@ class Partner {
   const Partner({
     required this.id,
     required this.naziv,
-    this.jib,
+    this.pib,
     this.pdvBroj,
     this.adresa,
     this.grad,
@@ -50,7 +50,7 @@ class Partner {
     return Partner(
       id: json['id'] as int,
       naziv: json['name'] as String,
-      jib: json['tax_id'] as String?,
+      pib: json['tax_id'] as String?,
       pdvBroj: json['vat_number'] as String?,
       adresa: json['address'] as String?,
       grad: json['city'] as String?,
@@ -63,7 +63,7 @@ class Partner {
   // Polja za POST/PATCH; prazna opciona polja se šalju kao null.
   Map<String, dynamic> toJson() => {
     'name': naziv,
-    'tax_id': jib,
+    'tax_id': pib,
     'vat_number': pdvBroj,
     'address': adresa,
     'city': grad,

@@ -1,6 +1,8 @@
 import '../models/article.dart';
+import '../models/auth_models.dart';
 import '../models/company.dart';
 import '../models/stock_card.dart';
+import '../models/work_order.dart' show datumZaApi;
 import 'api_client.dart';
 
 // Firme, artikli i normativi prijavljenog korisnika.
@@ -105,34 +107,43 @@ class ArticlesService {
   Future<Artikal> createArticle(
     int companyId, {
     required String type,
-    required String code,
+    String? code,
     required String name,
     required String unitOfMeasure,
+    double? minimumQuantity,
     List<Normativ> bomItems = const [],
   }) async {
     final body = await _client.post('/companies/$companyId/articles', {
       'type': type,
-      'code': code,
+      'code': ?code,
       'name': name,
       'unit_of_measure': jmZaApi(unitOfMeasure),
+      if (type == tipRepromaterijal) 'minimum_quantity': minimumQuantity,
       if (type == tipGotovProizvod) 'bom_items': bomItems.map(_stavka).toList(),
     });
     return _artikalIz(body);
   }
 
   // PATCH /companies/{company}/articles/{article}
-  // Mijenjaju se samo šifra, naziv i JM; normativ ima svoje rute.
+  // Mijenjaju se šifra, naziv, JM i minimalna količina (repromaterijal);
+  // normativ ima svoje rute. Minimalna količina se šalje samo kad je
+  // izmijenjena (izmijenjenMinimum); null tada briše prag.
+  // Šifra se šalje samo kad je izmijenjena (izmijenjenaSifra); null je briše.
   Future<Artikal> updateArticle(
     int companyId,
     int articleId, {
+    bool izmijenjenaSifra = false,
     String? code,
     String? name,
     String? unitOfMeasure,
+    bool izmijenjenMinimum = false,
+    double? minimumQuantity,
   }) async {
     final body = await _client.patch(_artikal(companyId, articleId), {
-      'code': ?code,
+      if (izmijenjenaSifra) 'code': code,
       'name': ?name,
       if (unitOfMeasure != null) 'unit_of_measure': jmZaApi(unitOfMeasure),
+      if (izmijenjenMinimum) 'minimum_quantity': minimumQuantity,
     });
     return _artikalIz(body);
   }
@@ -140,10 +151,14 @@ class ArticlesService {
   // DELETE /companies/{company}/articles/{article} — meko brisanje.
   // GET /companies/{company}/articles/{article}/stock-card
   // Bez warehouseId vide se promjene na svim skladištima.
+  // Sa dateFrom/dateTo meta nosi i početno stanje (prije dateFrom) i stanje
+  // na kraju dana dateTo (bez dateTo: trenutno stanje).
   Future<StranicaKartice> fetchStockCard(
     int companyId,
     int articleId, {
     int? warehouseId,
+    DateTime? dateFrom,
+    DateTime? dateTo,
     int page = 1,
     int perPage = 50,
   }) async {
@@ -153,12 +168,16 @@ class ArticlesService {
         'page': '$page',
         'per_page': '$perPage',
         if (warehouseId != null) 'warehouse_id': '$warehouseId',
+        if (dateFrom != null) 'date_from': datumZaApi(dateFrom),
+        if (dateTo != null) 'date_to': datumZaApi(dateTo),
       },
     );
 
     final meta = body['meta'] as Map<String, dynamic>? ?? const {};
 
     return StranicaKartice(
+      pocetnoStanje: StanjeKartice.fromJson(meta['opening_balance']),
+      zavrsnoStanje: StanjeKartice.fromJson(meta['closing_balance']),
       promjene: (body['data'] as List)
           .map((e) => PromjenaKartice.fromJson(e as Map<String, dynamic>))
           .toList(),
@@ -283,7 +302,13 @@ class ArticlesService {
         path,
         query: {...query, 'page': '$stranica'},
       );
-      rezultat.addAll((body['data'] as List).cast<Map<String, dynamic>>());
+      // Odgovor bez liste se javlja kao ApiException (kontroleri je hvataju),
+      // umjesto TypeError-a koji ruši učitavanje firmi.
+      final data = body['data'];
+      if (data is! List) {
+        throw ApiException('Server je vratio neočekivan odgovor za $path.');
+      }
+      rezultat.addAll(data.cast<Map<String, dynamic>>());
       zadnja = (body['meta']?['last_page'] as int?) ?? stranica;
       stranica++;
     } while (stranica <= zadnja);

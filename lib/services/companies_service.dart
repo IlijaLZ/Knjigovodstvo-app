@@ -26,7 +26,7 @@ class CompaniesService {
   final ApiClient _client = ApiClient();
 
   // GET /companies
-  // search: naziv ili JIB (server dozvoljava max 100 znakova).
+  // search: naziv ili PIB (server dozvoljava max 100 znakova).
   // trashed: 'with' uključuje obrisane, 'only' samo obrisane.
   Future<StranicaFirmi> fetchCompanies({
     int page = 1,

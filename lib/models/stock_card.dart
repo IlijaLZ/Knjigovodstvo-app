@@ -60,6 +60,33 @@ class PromjenaKartice {
     );
   }
 
+  // Ista promjena sa zadatim saldom (tekući saldo izračunat u aplikaciji).
+  PromjenaKartice saSaldom(double kolicina, double vrijednost) {
+    return PromjenaKartice(
+      id: id,
+      datum: datum,
+      vrsta: vrsta,
+      skladiste: skladiste,
+      vrstaDokumenta: vrstaDokumenta,
+      dokumentId: dokumentId,
+      brojDokumenta: brojDokumenta,
+      ulaz: ulaz,
+      izlaz: izlaz,
+      cijena: cijena,
+      vrijednostUlaz: vrijednostUlaz,
+      vrijednostIzlaz: vrijednostIzlaz,
+      saldoKolicina: kolicina,
+      saldoVrijednost: vrijednost,
+    );
+  }
+
+  // Prosječna nabavna cijena nakon ove promjene (saldo vrijednosti / saldo
+  // količine). Polje `price` to nije uvijek: na prijemu je nabavna cijena
+  // tog prijema, a na izdavanju prosjek prije izdavanja. Kad je zaliha 0,
+  // prosjek se ne može izračunati, pa se prikazuje `price`.
+  double get prosjecnaCijena =>
+      saldoKolicina == 0 ? cijena : saldoVrijednost / saldoKolicina;
+
   // Naziv promjene za prikaz (šifarnik "Vrsta promjene na zalihi").
   String get nazivDokumenta => switch (vrsta) {
     'purchase_receipt' => 'Kalkulacija',
@@ -67,6 +94,32 @@ class PromjenaKartice {
     'production_receipt' => 'Trebovanje (ulaz u proizvodnju)',
     _ => vrsta,
   };
+}
+
+// Stanje kartice na dan (meta.opening_balance / meta.closing_balance).
+// datum je null kod završnog stanja bez date_to (trenutno stanje).
+class StanjeKartice {
+  final DateTime? datum;
+  final double kolicina;
+  final double vrijednost;
+
+  const StanjeKartice({
+    this.datum,
+    required this.kolicina,
+    required this.vrijednost,
+  });
+
+  static StanjeKartice? fromJson(Object? json) {
+    if (json is! Map<String, dynamic>) return null;
+    return StanjeKartice(
+      datum: DateTime.tryParse(json['date'] as String? ?? ''),
+      kolicina: _broj(json['quantity']),
+      vrijednost: _broj(json['value']),
+    );
+  }
+
+  // Prosječna nabavna cijena stanja (0 kad nema zalihe).
+  double get prosjecnaCijena => kolicina == 0 ? 0 : vrijednost / kolicina;
 }
 
 // Jedna stranica kartice sa podacima iz `meta` paginacije.
@@ -78,6 +131,12 @@ class StranicaKartice {
   final int? od;
   final int? doBroja;
 
+  // Stanje prije date_from (null bez date_from).
+  final StanjeKartice? pocetnoStanje;
+
+  // Stanje na kraju dana date_to; bez date_to trenutno stanje.
+  final StanjeKartice? zavrsnoStanje;
+
   StranicaKartice({
     required this.promjene,
     required this.stranica,
@@ -85,5 +144,31 @@ class StranicaKartice {
     required this.ukupno,
     this.od,
     this.doBroja,
+    this.pocetnoStanje,
+    this.zavrsnoStanje,
   });
+}
+
+double _zaokruzi(double v, int decimale) =>
+    double.parse(v.toStringAsFixed(decimale));
+
+// Tekući saldo: od stanja [pocetak] (količina, vrijednost) svaki red dodaje
+// ulaz i oduzima izlaz, redom kojim su promjene prikazane. Saldo redova sa
+// servera se ne koristi, pa saldo uvijek odgovara prometu u tabeli.
+// Vraća promjene sa saldom i stanje nakon zadnje promjene.
+(List<PromjenaKartice>, (double, double)) tekuciSaldo(
+  List<PromjenaKartice> promjene,
+  (double, double) pocetak,
+) {
+  var (kolicina, vrijednost) = pocetak;
+  final rezultat = <PromjenaKartice>[];
+  for (final p in promjene) {
+    kolicina = _zaokruzi(kolicina + p.ulaz - p.izlaz, 4);
+    vrijednost = _zaokruzi(
+      vrijednost + p.vrijednostUlaz - p.vrijednostIzlaz,
+      2,
+    );
+    rezultat.add(p.saSaldom(kolicina, vrijednost));
+  }
+  return (rezultat, (kolicina, vrijednost));
 }

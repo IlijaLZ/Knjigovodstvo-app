@@ -6,6 +6,12 @@ const String tipGotovProizvod = 'finished_product';
 double? _broj(Object? value) =>
     value == null ? null : double.tryParse(value.toString());
 
+// Artikal se u prikazu označava svojim ID-em (#12); šifra se ne prikazuje.
+String idArtikla(int? id) => id == null ? '' : '#$id';
+
+String nazivSaId(int? id, String naziv, {String razmak = ' — '}) =>
+    id == null ? naziv : '#$id$razmak$naziv';
+
 // Jedinice mjere koje API prihvata (šifarnik).
 const List<String> jediniceMjereApi = [
   'pcs',
@@ -92,6 +98,10 @@ class Artikal {
   final List<Normativ> normativi;
   final DateTime? obrisan;
 
+  // Repromaterijal: prag zalihe (minimum_quantity). Kad količina na stanju
+  // padne ispod njega, aplikacija prikazuje upozorenje. Null = bez praga.
+  final double? minimalnaKolicina;
+
   const Artikal({
     this.id,
     this.tip,
@@ -102,6 +112,7 @@ class Artikal {
     int? brojNormativa,
     this.normativi = const [],
     this.obrisan,
+    this.minimalnaKolicina,
   }) : _brojNormativa = brojNormativa;
 
   factory Artikal.fromJson(Map<String, dynamic> json) {
@@ -110,10 +121,11 @@ class Artikal {
     return Artikal(
       id: json['id'] as int,
       tip: json['type'] as String?,
-      sifra: json['code'] as String,
+      sifra: json['code'] as String? ?? '',
       naziv: json['name'] as String,
       jm: jmIzApi(json['unit_of_measure'] as String),
-      cijena: _broj(json['cost_price']),
+      // Repromaterijal: average_purchase_price; gotov proizvod: cost_price.
+      cijena: _broj(json['average_purchase_price'] ?? json['cost_price']),
       brojNormativa: json['bom_items_count'] as int?,
       normativi: bomItems == null
           ? const []
@@ -121,10 +133,18 @@ class Artikal {
                 .map((e) => Normativ.fromJson(e as Map<String, dynamic>))
                 .toList(),
       obrisan: DateTime.tryParse(json['deleted_at'] as String? ?? ''),
+      minimalnaKolicina: _broj(json['minimum_quantity']),
     );
   }
 
   bool get jeObrisan => obrisan != null;
+
+  bool get imaMinimalnuKolicinu =>
+      minimalnaKolicina != null && minimalnaKolicina! > 0;
+
+  // Količina je ispod praga minimalne zalihe.
+  bool ispodMinimuma(double kolicina) =>
+      imaMinimalnuKolicinu && kolicina < minimalnaKolicina!;
 
   int get brojNormativa => _brojNormativa ?? normativi.length;
 

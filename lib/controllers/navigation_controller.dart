@@ -3,6 +3,10 @@ import 'package:get/get.dart';
 class NavigationController extends GetxController {
   final RxInt selectedIndex = 0.obs;
 
+  void openPocetna() {
+    selectedIndex.value = 0;
+  }
+
   void openOFirmi() {
     selectedIndex.value = 1;
   }
@@ -47,6 +51,7 @@ class NavigationController extends GetxController {
     selectedIndex.value = 11;
   }
 
+  // Stanje magacina repromaterijala.
   void openStanjeMagacina() {
     selectedIndex.value = 12;
   }
@@ -77,5 +82,17 @@ class NavigationController extends GetxController {
 
   void openFirme() {
     selectedIndex.value = 19;
+  }
+
+  void openStanjeProizvodnje() {
+    selectedIndex.value = 20;
+  }
+
+  void openStanjeGotovihProizvoda() {
+    selectedIndex.value = 21;
+  }
+
+  void openPoslovneGodine() {
+    selectedIndex.value = 22;
   }
 }

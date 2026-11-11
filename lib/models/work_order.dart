@@ -21,16 +21,16 @@ String datumZaApi(DateTime datum) {
 class Kupac {
   final int id;
   final String naziv;
-  final String? jib;
+  final String? pib;
   final String? grad;
 
-  const Kupac({required this.id, required this.naziv, this.jib, this.grad});
+  const Kupac({required this.id, required this.naziv, this.pib, this.grad});
 
   factory Kupac.fromJson(Map<String, dynamic> json) {
     return Kupac(
       id: json['id'] as int,
       naziv: json['name'] as String,
-      jib: json['tax_id'] as String?,
+      pib: json['tax_id'] as String?,
       grad: json['city'] as String?,
     );
   }
@@ -129,7 +129,7 @@ class StavkaTrebovanja {
     return StavkaTrebovanja(
       id: json['id'] as int,
       articleId: json['article_id'] as int,
-      sifra: json['article_code'] as String,
+      sifra: json['article_code'] as String? ?? '',
       naziv: json['article_name'] as String,
       jm: jmIzApi(json['unit_of_measure'] as String),
       kolicina: _broj(json['quantity']) ?? 0,

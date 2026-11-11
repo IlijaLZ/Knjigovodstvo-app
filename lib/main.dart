@@ -3,6 +3,7 @@ import 'package:get/get.dart';
 
 import 'controllers/auth_controller.dart';
 import 'routes/app_routes.dart';
+import 'widgets/magacin_ui.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -21,12 +22,17 @@ class KnjigovodstvoApp extends StatelessWidget {
     return GetMaterialApp(
       debugShowCheckedModeBanner: false,
 
-      title: 'Knjigovodstvo',
+      title: 'Kalkulino',
 
       theme: ThemeData(
         useMaterial3: true,
 
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2563EB)),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: akcentAplikacije,
+          primary: akcentAplikacije,
+          secondary: mint,
+          onSecondary: akcentTamni,
+        ),
 
         scaffoldBackgroundColor: const Color(0xFFF8FAFC),
       ),

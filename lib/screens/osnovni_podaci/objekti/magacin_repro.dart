@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 class MagacinRepromaterijala extends StatelessWidget {
   const MagacinRepromaterijala({super.key});
 
-  static const Color primaryColor = Color(0xFF2563EB);
+  static const Color primaryColor = Color(0xFF0F5C66);
   static const Color headerColor = Color(0xFFE2E8F0);
   static const Color groupHeaderColor = Color(0xFFCBD5E1);
   static const Color borderColor = Color(0xFFCBD5E1);
