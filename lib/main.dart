@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 import 'controllers/auth_controller.dart';
+import 'glasovne_komande/zec_panel.dart';
 import 'routes/app_routes.dart';
 import 'widgets/magacin_ui.dart';
 
@@ -42,6 +43,9 @@ class KnjigovodstvoApp extends StatelessWidget {
           : AppRoutes.login,
 
       getPages: AppRoutes.pages,
+
+      // Zec Kalkulino (glasovne komande) iznad svih ekrana.
+      builder: (context, child) => ZecSloj(child: child!),
     );
   }
 }

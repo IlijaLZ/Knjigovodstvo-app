@@ -7,6 +7,8 @@ import 'package:get/get.dart';
 import '../../controllers/firma_controller.dart';
 import '../../controllers/navigation_controller.dart';
 import '../../controllers/niske_zalihe_controller.dart';
+import '../../izvoz/dugme_izvoza.dart';
+import '../../izvoz/excel_izvoz.dart';
 import '../../models/article.dart';
 import '../../models/auth_models.dart';
 import '../../services/articles_service.dart';
@@ -1346,6 +1348,113 @@ class _ArtikliScreenState extends State<ArtikliScreen> {
     );
   }
 
+  // Svi aktivni artikli ovog tipa uz trenutnu pretragu (sve stranice). Za
+  // gotove proizvode i list "Normativi" (include=bom_items).
+  Future<List<ListExcel>> _pripremiExcel() async {
+    final firma = _firmaController.izabranaFirma.value;
+    if (firma == null) throw ApiException('Nije izabrana firma.');
+
+    final svi = <Artikal>[];
+    var stranica = 1;
+    var zadnja = 1;
+    do {
+      final r = await _service.fetchArticles(
+        firma.id,
+        type: widget.tip,
+        page: stranica,
+        search: _pretraga,
+        perPage: 100,
+        saNormativima: _gotovProizvod,
+      );
+      svi.addAll(r.artikli.where((a) => !a.jeObrisan));
+      zadnja = r.zadnjaStranica;
+      stranica++;
+    } while (stranica <= zadnja);
+
+    final gotov = _gotovProizvod;
+    final saBrojemNormativa = gotov && svi.any((a) => a.poznatBrojNormativa);
+
+    return [
+      ListExcel(
+        naziv: gotov ? 'Gotovi proizvodi' : 'Repromaterijal',
+        naslov: _naslov,
+        podnaslovi: [
+          firma.name,
+          [
+            '${svi.length} artikala',
+            if (_pretraga.isNotEmpty) 'Pretraga: $_pretraga',
+          ].join(' · '),
+        ],
+        kolone: [
+          const KolonaExcel('ID', vrsta: VrstaKolone.broj, sirina: 8),
+          const KolonaExcel('Šifra', sirina: 12),
+          const KolonaExcel('Naziv', sirina: 38),
+          const KolonaExcel('JM', sirina: 7),
+          KolonaExcel(
+            gotov ? 'Cijena koštanja' : 'Prosj. nab. cijena',
+            vrsta: VrstaKolone.iznos,
+            sirina: 17,
+          ),
+          if (!gotov)
+            const KolonaExcel(
+              'Min. zaliha',
+              vrsta: VrstaKolone.broj,
+              sirina: 12,
+            ),
+          if (saBrojemNormativa)
+            const KolonaExcel(
+              'Stavki normativa',
+              vrsta: VrstaKolone.broj,
+              sirina: 16,
+            ),
+        ],
+        redovi: [
+          for (final a in svi)
+            [
+              a.id,
+              a.sifra,
+              a.naziv,
+              a.jm,
+              a.cijena,
+              if (!gotov) a.minimalnaKolicina,
+              if (saBrojemNormativa)
+                a.poznatBrojNormativa ? a.brojNormativa : null,
+            ],
+        ],
+      ),
+      if (gotov && svi.any((a) => a.normativi.isNotEmpty))
+        ListExcel(
+          naziv: 'Normativi',
+          naslov: 'Normativi gotovih proizvoda',
+          podnaslovi: [firma.name],
+          kolone: const [
+            KolonaExcel('Šifra', sirina: 12),
+            KolonaExcel('Proizvod', sirina: 32),
+            KolonaExcel('JM', sirina: 7),
+            KolonaExcel('Sirovina', sirina: 30),
+            KolonaExcel('JM sirovine', sirina: 11),
+            KolonaExcel('Količina', vrsta: VrstaKolone.broj, sirina: 11),
+            KolonaExcel('Cijena', vrsta: VrstaKolone.broj, sirina: 11),
+            KolonaExcel('Iznos', vrsta: VrstaKolone.iznos, sirina: 13),
+          ],
+          redovi: [
+            for (final a in svi)
+              for (final n in a.normativi)
+                [
+                  a.sifra,
+                  a.naziv,
+                  a.jm,
+                  n.naziv,
+                  n.jm,
+                  n.kolicina,
+                  n.cijena,
+                  n.iznos,
+                ],
+          ],
+        ),
+    ];
+  }
+
   Widget _zaglavlje() {
     final tema = _tema;
 
@@ -1371,6 +1480,12 @@ class _ArtikliScreenState extends State<ArtikliScreen> {
           ikona: Icons.add_rounded,
           visina: 48,
           onTap: _imaFirmu ? _dodajNoviArtikal : null,
+        );
+
+        final excel = DugmeIzvoza(
+          visina: 48,
+          nazivFajla: () => _naslov,
+          pripremi: _pripremiExcel,
         );
 
         return Container(
@@ -1436,13 +1551,19 @@ class _ArtikliScreenState extends State<ArtikliScreen> {
                         children: [
                           Expanded(child: _pretrazivac()),
                           const SizedBox(width: 10),
+                          if (_imaFirmu) ...[excel, const SizedBox(width: 10)],
                           dodaj,
                         ],
                       )
                     else ...[
                       _pretrazivac(),
                       const SizedBox(height: 10),
-                      dodaj,
+                      Row(
+                        children: [
+                          if (_imaFirmu) ...[excel, const SizedBox(width: 10)],
+                          Expanded(child: dodaj),
+                        ],
+                      ),
                     ],
                   ],
                 ),

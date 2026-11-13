@@ -16,6 +16,10 @@ class StanjeArtikla {
   final double prosjecnaCijena;
   final double vrijednost;
 
+  // Ulazi/izlazi (za period, ako je zadat; inače sva kretanja). Null ako
+  // ih server ne vrati — tada se sabiraju iz kartice artikla.
+  final SumeKartice? sume;
+
   const StanjeArtikla({
     required this.id,
     this.skladiste,
@@ -23,6 +27,7 @@ class StanjeArtikla {
     required this.kolicina,
     required this.prosjecnaCijena,
     required this.vrijednost,
+    this.sume,
   });
 
   factory StanjeArtikla.fromJson(Map<String, dynamic> json) {
@@ -35,6 +40,17 @@ class StanjeArtikla {
       kolicina: _broj(json['quantity']),
       prosjecnaCijena: _broj(json['average_price']),
       vrijednost: _broj(json['value']),
+      sume: json.containsKey('in_quantity')
+          ? SumeKartice(
+              zadnjiDatum: DateTime.tryParse(
+                json['last_movement_date'] as String? ?? '',
+              ),
+              ulaz: _broj(json['in_quantity']),
+              izlaz: _broj(json['out_quantity']),
+              vrijednostUlaz: _broj(json['in_value']),
+              vrijednostIzlaz: _broj(json['out_value']),
+            )
+          : null,
     );
   }
 }

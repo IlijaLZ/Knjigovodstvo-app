@@ -3,6 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:knjigovodstvo_app/controllers/firma_controller.dart';
+import 'package:knjigovodstvo_app/izvoz/dugme_izvoza.dart';
+import 'package:knjigovodstvo_app/izvoz/excel_izvoz.dart';
+import 'package:knjigovodstvo_app/izvoz/trebovanje_excel.dart';
 import 'package:knjigovodstvo_app/models/article.dart';
 import 'package:knjigovodstvo_app/models/auth_models.dart';
 import 'package:knjigovodstvo_app/models/work_order.dart';
@@ -750,6 +753,50 @@ class _TrebovanjeScreenState extends State<TrebovanjeScreen> {
     );
   }
 
+  bool get _prikaziUtrosak => _imaFirmu;
+
+  // Naziv fajla utroška; postavlja se kad se izabere period.
+  String _nazivUtroska = 'Utrosak materijala';
+
+  // Utrošak materijala za period (datum izdavanja), iz izvještaja servera.
+  Future<List<ListExcel>> _pripremiUtrosak() async {
+    final firma = _firmaController.izabranaFirma.value;
+    if (firma == null) throw ApiException('Nije izabrana firma.');
+
+    final sada = DateTime.now();
+    final period = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(sada.year + 1, 12, 31),
+      initialDateRange: DateTimeRange(
+        start: DateTime(sada.year, sada.month, 1),
+        end: DateTime(sada.year, sada.month, sada.day),
+      ),
+      helpText: 'Period utroška (datum izdavanja naloga)',
+      saveText: 'Izvezi',
+    );
+    if (period == null) return [];
+
+    final izvjestaj = await _service.fetchUtrosak(
+      firma.id,
+      dateFrom: period.start,
+      dateTo: period.end,
+      poNalozima: true,
+    );
+
+    _nazivUtroska =
+        'Utrosak materijala ${_formatDatum(period.start)} - '
+                '${_formatDatum(period.end)}'
+            .replaceAll('.', '-');
+
+    return utrosakListovi(
+      izvjestaj: izvjestaj,
+      firma: firma.name,
+      od: period.start,
+      doDatuma: period.end,
+    );
+  }
+
   Widget _zaglavlje() {
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -805,10 +852,31 @@ class _TrebovanjeScreenState extends State<TrebovanjeScreen> {
           onIzaberi: _imaFirmu ? _promjenaStatusa : null,
         );
 
+        final utrosak = DugmeIzvoza(
+          visina: 48,
+          tekst: 'Utrošak materijala',
+          opis:
+              'Excel ili PDF: utrošak materijala po izdatim nalozima '
+              'za period',
+          nazivFajla: () => _nazivUtroska,
+          pripremi: _pripremiUtrosak,
+        );
+
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            naslov,
+            if (w >= 640 && _prikaziUtrosak)
+              Row(
+                children: [
+                  Expanded(child: naslov),
+                  const SizedBox(width: 20),
+                  utrosak,
+                ],
+              )
+            else ...[
+              naslov,
+              if (_prikaziUtrosak) ...[const SizedBox(height: 16), utrosak],
+            ],
             SizedBox(height: malo ? 18 : 24),
             Container(
               decoration: const BoxDecoration(
@@ -1782,6 +1850,23 @@ class _TrebovanjeDialogState extends State<_TrebovanjeDialog> {
       onTap: _trebovanje == null ? null : _stampaj,
     );
 
+    final broj = (_trebovanje?.brojNaloga ?? widget.nalog.broj).trim();
+    final excel = DugmeIzvoza(
+      visina: 46,
+      nazivFajla: () => 'Trebovanje ${broj.isEmpty ? widget.nalog.id : broj}',
+      pripremi: () async {
+        final t = _trebovanje;
+        if (t == null) return [];
+        return [
+          trebovanjeList(
+            trebovanje: t,
+            nalog: widget.nalog,
+            firma: Get.find<FirmaController>().izabranaFirma.value?.name ?? '',
+          ),
+        ];
+      },
+    );
+
     if (usko) {
       return Dialog.fullscreen(
         backgroundColor: Colors.white,
@@ -1810,6 +1895,10 @@ class _TrebovanjeDialogState extends State<_TrebovanjeDialog> {
                   children: [
                     Expanded(child: zatvori),
                     const SizedBox(width: 10),
+                    if (_trebovanje != null) ...[
+                      excel,
+                      const SizedBox(width: 10),
+                    ],
                     Expanded(child: stampaj),
                   ],
                 ),
@@ -1853,7 +1942,15 @@ class _TrebovanjeDialogState extends State<_TrebovanjeDialog> {
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.end,
-                children: [zatvori, const SizedBox(width: 10), stampaj],
+                children: [
+                  zatvori,
+                  const SizedBox(width: 10),
+                  if (_trebovanje != null) ...[
+                    excel,
+                    const SizedBox(width: 10),
+                  ],
+                  stampaj,
+                ],
               ),
             ),
           ],

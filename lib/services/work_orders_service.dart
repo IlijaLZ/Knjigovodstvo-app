@@ -1,4 +1,5 @@
 import '../models/article.dart';
+import '../models/utrosak.dart';
 import '../models/work_order.dart';
 import 'api_client.dart';
 
@@ -89,6 +90,7 @@ class WorkOrdersService {
     String? trashed,
     String sort = 'date',
     String direction = 'desc',
+    int? perPage,
   }) async {
     final pretraga = search?.trim() ?? '';
 
@@ -96,6 +98,7 @@ class WorkOrdersService {
       _nalozi(companyId),
       query: {
         'page': '$page',
+        if (perPage != null) 'per_page': '$perPage',
         'sort': sort,
         'direction': direction,
         if (pretraga.isNotEmpty) 'search': pretraga,
@@ -119,6 +122,29 @@ class WorkOrdersService {
       od: meta['from'] as int?,
       doBroja: meta['to'] as int?,
     );
+  }
+
+  // GET /companies/{company}/reports/material-consumption
+  // Utrošak materijala izdatih (neobrisanih) naloga; period po datumu
+  // izdavanja. Bez paginacije. Sa poNalozima vraća i redove po nalogu,
+  // proizvodu i materijalu. warehouseId je izvorni magacin naloga.
+  Future<IzvjestajUtroska> fetchUtrosak(
+    int companyId, {
+    required DateTime dateFrom,
+    required DateTime dateTo,
+    int? warehouseId,
+    bool poNalozima = false,
+  }) async {
+    final body = await _client.get(
+      '/companies/$companyId/reports/material-consumption',
+      query: {
+        'date_from': datumZaApi(dateFrom),
+        'date_to': datumZaApi(dateTo),
+        if (warehouseId != null) 'warehouse_id': '$warehouseId',
+        if (poNalozima) 'group_by': 'work_order',
+      },
+    );
+    return IzvjestajUtroska.fromJson(body);
   }
 
   // GET /companies/{company}/work-orders/{workOrder} — sa trebovanjem.

@@ -14,6 +14,8 @@ import '../../services/stocks_service.dart';
 import '../../widgets/logo.dart';
 import '../../widgets/magacin_ui.dart';
 import '../../widgets/paginacija_widget.dart';
+import '../../izvoz/dugme_izvoza.dart';
+import '../../izvoz/excel_izvoz.dart';
 import '../analiticka_kartica.dart';
 
 String _format(double value) => value.toStringAsFixed(2).replaceAll('.', ',');
@@ -162,7 +164,12 @@ class _StanjeMagacinaScreenState extends State<StanjeMagacinaScreen> {
 
       setState(() {
         _stanja = rezultat.stanja;
-        _sume.clear();
+        _sume
+          ..clear()
+          ..addAll({
+            for (final s in rezultat.stanja)
+              if (s.sume != null) s.id: s.sume!,
+          });
         _stranica = rezultat.stranica;
         _zadnjaStranica = rezultat.zadnjaStranica;
         _ukupno = rezultat.ukupno;
@@ -181,10 +188,11 @@ class _StanjeMagacinaScreenState extends State<StanjeMagacinaScreen> {
     }
   }
 
-  // Sume za artikle na trenutnoj stranici; svaki red se popuni čim stigne.
+  // Sume za artikle na trenutnoj stranici kojima ih /stocks nije vratio
+  // (stariji server): sabiraju se iz kartice, svaki red čim stigne.
   Future<void> _ucitajSume(int companyId, int zahtjev) async {
     await Future.wait(
-      _stanja.map((s) async {
+      _stanja.where((s) => !_sume.containsKey(s.id)).map((s) async {
         final articleId = s.artikal.id;
         if (articleId == null) return;
         try {
@@ -201,6 +209,120 @@ class _StanjeMagacinaScreenState extends State<StanjeMagacinaScreen> {
         }
       }),
     );
+  }
+
+  // Sve stranice stanja (uz trenutnu pretragu) za Excel. Ulazi/izlazi
+  // (sva kretanja) dolaze iz /stocks; stariji server ih ne vraća, pa se
+  // tada te kolone izostavljaju.
+  Future<List<ListExcel>> _pripremiExcel() async {
+    final firma = _firmaController.izabranaFirma.value;
+    final skladiste = _skladiste;
+    if (firma == null || skladiste == null) {
+      throw ApiException('Stanje još nije učitano.');
+    }
+
+    final sva = <StanjeArtikla>[];
+    var stranica = 1;
+    var zadnja = 1;
+    do {
+      final r = await _service.fetchStocks(
+        firma.id,
+        warehouseId: skladiste.id,
+        search: _pretraga,
+        page: stranica,
+        perPage: 100,
+      );
+      sva.addAll(r.stanja);
+      zadnja = r.zadnjaStranica;
+      stranica++;
+    } while (stranica <= zadnja);
+
+    final saMinimumom = _pratiMinimum;
+    final saKretanjem = sva.isNotEmpty && sva.every((s) => s.sume != null);
+    double suma(double Function(SumeKartice) f) =>
+        sva.fold(0, (z, s) => z + (s.sume == null ? 0 : f(s.sume!)));
+    double cijena(StanjeArtikla s) =>
+        s.kolicina == 0 ? (s.artikal.cijena ?? 0) : s.prosjecnaCijena;
+
+    return [
+      ListExcel(
+        naziv: 'Stanje',
+        naslov: _naslov,
+        podnaslovi: [
+          firma.name,
+          'Stanje na dan ${_formatDatum(DateTime.now())}',
+          if (_pretraga.isNotEmpty) 'Pretraga: $_pretraga',
+        ],
+        kolone: [
+          const KolonaExcel('R.br.', vrsta: VrstaKolone.broj, sirina: 7),
+          const KolonaExcel('ID', vrsta: VrstaKolone.broj, sirina: 8),
+          const KolonaExcel('Šifra', sirina: 12),
+          const KolonaExcel('Artikal', sirina: 36),
+          const KolonaExcel('JM', sirina: 7),
+          if (saKretanjem) ...const [
+            KolonaExcel(
+              'Zadnja promjena',
+              vrsta: VrstaKolone.datum,
+              sirina: 15,
+            ),
+            KolonaExcel('Ulaz', vrsta: VrstaKolone.broj, sirina: 11),
+            KolonaExcel('Izlaz', vrsta: VrstaKolone.broj, sirina: 11),
+          ],
+          const KolonaExcel('Količina', vrsta: VrstaKolone.broj, sirina: 12),
+          if (saMinimumom)
+            const KolonaExcel('Minimum', vrsta: VrstaKolone.broj, sirina: 11),
+          const KolonaExcel(
+            'Prosj. cijena',
+            vrsta: VrstaKolone.iznos,
+            sirina: 14,
+          ),
+          if (saKretanjem) ...const [
+            KolonaExcel('Vrij. ulaza', vrsta: VrstaKolone.iznos, sirina: 14),
+            KolonaExcel('Vrij. izlaza', vrsta: VrstaKolone.iznos, sirina: 14),
+          ],
+          const KolonaExcel('Vrijednost', vrsta: VrstaKolone.iznos, sirina: 15),
+        ],
+        redovi: [
+          for (var i = 0; i < sva.length; i++)
+            [
+              i + 1,
+              sva[i].artikal.id,
+              sva[i].artikal.sifra,
+              sva[i].artikal.naziv,
+              sva[i].artikal.jm,
+              if (saKretanjem) ...[
+                sva[i].sume!.zadnjiDatum,
+                sva[i].sume!.ulaz,
+                sva[i].sume!.izlaz,
+              ],
+              sva[i].kolicina,
+              if (saMinimumom) sva[i].artikal.minimalnaKolicina,
+              cijena(sva[i]),
+              if (saKretanjem) ...[
+                sva[i].sume!.vrijednostUlaz,
+                sva[i].sume!.vrijednostIzlaz,
+              ],
+              sva[i].vrijednost,
+            ],
+        ],
+        ukupno: [
+          'Ukupno',
+          null,
+          null,
+          '${sva.length} artikala',
+          null,
+          if (saKretanjem) ...[null, null, null],
+          null,
+          if (saMinimumom) null,
+          null,
+          if (saKretanjem) ...[
+            suma((x) => x.vrijednostUlaz),
+            suma((x) => x.vrijednostIzlaz),
+          ],
+          sva.fold<double>(0, (suma, s) => suma + s.vrijednost),
+        ],
+      ),
+    ];
   }
 
   void _otvoriKarticu(StanjeArtikla s) {
@@ -944,7 +1066,15 @@ class _StanjeMagacinaScreenState extends State<StanjeMagacinaScreen> {
               'Klik na red otvara analitičku karticu',
               style: TextStyle(fontSize: 12, color: MagacinBoje.priguseno),
             ),
-          ],
+            const SizedBox(width: 14),
+          ] else
+            const SizedBox(width: 10),
+          DugmeIzvoza(
+            visina: 36,
+            nazivFajla: () =>
+                '$_naslov ${_formatDatum(DateTime.now()).replaceAll('.', '-')}',
+            pripremi: _pripremiExcel,
+          ),
         ],
       ),
     );

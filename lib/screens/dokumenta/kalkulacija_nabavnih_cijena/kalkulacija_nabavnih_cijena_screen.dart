@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:knjigovodstvo_app/controllers/firma_controller.dart';
 import 'package:knjigovodstvo_app/controllers/poslovne_godine_controller.dart';
+import 'package:knjigovodstvo_app/izvoz/dugme_izvoza.dart';
+import 'package:knjigovodstvo_app/izvoz/excel_izvoz.dart';
 import 'package:knjigovodstvo_app/models/auth_models.dart';
 import 'package:knjigovodstvo_app/models/purchase_calculation.dart';
 import 'package:knjigovodstvo_app/routes/app_routes.dart';
@@ -1031,6 +1033,164 @@ class _KalkulacijaNabavnihCijenaScreenState
     );
   }
 
+  // Sve kalkulacije uz trenutni filter i pretragu (sve stranice), zajedno sa
+  // stavkama (include=items): list "Kalkulacije" i list "Stavke".
+  Future<List<ListExcel>> _pripremiExcel() async {
+    final firma = _firmaController.izabranaFirma.value;
+    if (firma == null) throw ApiException('Nije izabrana firma.');
+
+    final sve = <Kalkulacija>[];
+    var stranica = 1;
+    var zadnja = 1;
+    do {
+      final r = await _service.fetchCalculations(
+        firma.id,
+        page: stranica,
+        search: _pretraga,
+        status: _status,
+        perPage: 100,
+        saStavkama: true,
+      );
+      sve.addAll(r.kalkulacije);
+      zadnja = r.zadnjaStranica;
+      stranica++;
+    } while (stranica <= zadnja);
+
+    final nazivStatusa =
+        _statusi.where((s) => s.$2 == _status).firstOrNull?.$1 ?? 'Sve';
+    double suma(double Function(RekapitulacijaKalkulacije) f) =>
+        sve.fold(0, (s, k) => s + f(k.rekapitulacija));
+
+    return [
+      ListExcel(
+        naziv: 'Kalkulacije',
+        naslov: 'Kalkulacije nabavnih cijena',
+        podnaslovi: [
+          firma.name,
+          [
+            'Status: $nazivStatusa',
+            if (_pretraga.isNotEmpty) 'Pretraga: $_pretraga',
+            'Izvezeno ${_formatDatum(DateTime.now())}',
+          ].join(' · '),
+        ],
+        kolone: const [
+          KolonaExcel('Datum', vrsta: VrstaKolone.datum, sirina: 12),
+          KolonaExcel('Prijemnica', sirina: 14),
+          KolonaExcel('Faktura', sirina: 14),
+          KolonaExcel('Dobavljač', sirina: 28),
+          KolonaExcel('Skladište', sirina: 22),
+          KolonaExcel('Status', sirina: 12),
+          KolonaExcel('Stavki', vrsta: VrstaKolone.broj, sirina: 8),
+          KolonaExcel('Fakt. vrijednost', vrsta: VrstaKolone.iznos, sirina: 16),
+          KolonaExcel('Prevoz', vrsta: VrstaKolone.iznos, sirina: 11),
+          KolonaExcel('Špedicija', vrsta: VrstaKolone.iznos, sirina: 11),
+          KolonaExcel('Carina', vrsta: VrstaKolone.iznos, sirina: 11),
+          KolonaExcel('Zavisni troškovi', vrsta: VrstaKolone.iznos, sirina: 16),
+          KolonaExcel('Nab. vrijednost', vrsta: VrstaKolone.iznos, sirina: 16),
+        ],
+        redovi: [
+          for (final k in sve)
+            [
+              k.datum,
+              k.brojPrijemnice,
+              k.brojFakture,
+              k.dobavljac,
+              k.skladiste?.naziv,
+              k.jeProknjizena ? 'Proknjižena' : 'Nacrt',
+              k.brojStavki,
+              k.rekapitulacija.fakturnaVrijednost,
+              k.rekapitulacija.prevoz,
+              k.rekapitulacija.spedicija,
+              k.rekapitulacija.carina,
+              k.rekapitulacija.zavisniTroskovi,
+              k.rekapitulacija.nabavnaVrijednost,
+            ],
+        ],
+        ukupno: [
+          'Ukupno',
+          null,
+          null,
+          '${sve.length} kalkulacija',
+          null,
+          null,
+          null,
+          suma((r) => r.fakturnaVrijednost),
+          suma((r) => r.prevoz),
+          suma((r) => r.spedicija),
+          suma((r) => r.carina),
+          suma((r) => r.zavisniTroskovi),
+          suma((r) => r.nabavnaVrijednost),
+        ],
+      ),
+      ListExcel(
+        naziv: 'Stavke',
+        naslov: 'Stavke kalkulacija nabavnih cijena',
+        podnaslovi: [firma.name, 'Status: $nazivStatusa'],
+        kolone: const [
+          KolonaExcel('Datum', vrsta: VrstaKolone.datum, sirina: 12),
+          KolonaExcel('Prijemnica', sirina: 14),
+          KolonaExcel('Faktura', sirina: 14),
+          KolonaExcel('Dobavljač', sirina: 26),
+          KolonaExcel('Status', sirina: 12),
+          KolonaExcel('Šifra', sirina: 10),
+          KolonaExcel('Artikal', sirina: 30),
+          KolonaExcel('JM', sirina: 7),
+          KolonaExcel('Količina', vrsta: VrstaKolone.broj, sirina: 11),
+          KolonaExcel('Fakt. cijena', vrsta: VrstaKolone.broj, sirina: 13),
+          KolonaExcel('Fakt. vrijednost', vrsta: VrstaKolone.iznos, sirina: 16),
+          KolonaExcel('Zavisni trošak', vrsta: VrstaKolone.iznos, sirina: 15),
+          KolonaExcel('Nab. cijena', vrsta: VrstaKolone.broj, sirina: 13),
+          KolonaExcel('Nab. vrijednost', vrsta: VrstaKolone.iznos, sirina: 16),
+        ],
+        redovi: [
+          for (final k in sve)
+            for (final st in k.stavke)
+              [
+                k.datum,
+                k.brojPrijemnice,
+                k.brojFakture,
+                k.dobavljac,
+                k.jeProknjizena ? 'Proknjižena' : 'Nacrt',
+                st.sifra,
+                st.naziv,
+                st.jm,
+                st.kolicina,
+                st.fakturnaCijena,
+                st.fakturnaVrijednost,
+                st.zavisniTrosak,
+                st.nabavnaCijena,
+                st.nabavnaVrijednost,
+              ],
+        ],
+        ukupno: [
+          'Ukupno',
+          null,
+          null,
+          null,
+          null,
+          null,
+          '${sve.fold<int>(0, (s, k) => s + k.stavke.length)} stavki',
+          null,
+          null,
+          null,
+          sve.fold<double>(
+            0,
+            (s, k) => k.stavke.fold(s, (z, st) => z + st.fakturnaVrijednost),
+          ),
+          sve.fold<double>(
+            0,
+            (s, k) => k.stavke.fold(s, (z, st) => z + st.zavisniTrosak),
+          ),
+          null,
+          sve.fold<double>(
+            0,
+            (s, k) => k.stavke.fold(s, (z, st) => z + st.nabavnaVrijednost),
+          ),
+        ],
+      ),
+    ];
+  }
+
   Widget _zaglavlje() {
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -1086,6 +1246,14 @@ class _KalkulacijaNabavnihCijenaScreenState
           onIzaberi: _imaFirmu ? _promjenaStatusa : null,
         );
 
+        final excel = DugmeIzvoza(
+          visina: 48,
+          nazivFajla: () =>
+              'Kalkulacije nabavnih cijena ${_formatDatum(DateTime.now())}'
+                  .replaceAll('.', '-'),
+          pripremi: _pripremiExcel,
+        );
+
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -1094,13 +1262,19 @@ class _KalkulacijaNabavnihCijenaScreenState
                 children: [
                   Expanded(child: naslov),
                   const SizedBox(width: 20),
+                  if (_imaFirmu) ...[excel, const SizedBox(width: 10)],
                   nova,
                 ],
               )
             else ...[
               naslov,
               const SizedBox(height: 16),
-              nova,
+              Row(
+                children: [
+                  if (_imaFirmu) ...[excel, const SizedBox(width: 10)],
+                  Expanded(child: nova),
+                ],
+              ),
             ],
             SizedBox(height: malo ? 18 : 24),
             // Kartice statusa lijevo, pretraga desno; ispod linija.

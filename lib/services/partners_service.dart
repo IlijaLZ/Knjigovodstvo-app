@@ -34,6 +34,7 @@ class PartnersService {
     int page = 1,
     String? search,
     String? trashed,
+    int? perPage,
   }) async {
     final pretraga = search?.trim() ?? '';
 
@@ -42,6 +43,7 @@ class PartnersService {
       query: {
         'sort': 'name',
         'page': '$page',
+        if (perPage != null) 'per_page': '$perPage',
         if (pretraga.isNotEmpty)
           'search': pretraga.length > 100
               ? pretraga.substring(0, 100)

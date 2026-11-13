@@ -34,6 +34,17 @@ String _kolicina(double v) {
   return t.replaceAll('.', ',');
 }
 
+// Iznos u eurima sa razdvajanjem hiljada: 12.345,67 €
+String _iznos(double v) {
+  final negativan = v < 0;
+  final dijelovi = v.abs().toStringAsFixed(2).split('.');
+  final cijeli = dijelovi[0].replaceAllMapped(
+    RegExp(r'\B(?=(\d{3})+(?!\d))'),
+    (_) => '.',
+  );
+  return '${negativan ? '-' : ''}$cijeli,${dijelovi[1]} €';
+}
+
 String _datum(DateTime? d) {
   if (d == null) return '—';
   final dd = d.day.toString().padLeft(2, '0');
@@ -76,12 +87,14 @@ String _pozdrav(DateTime sada) {
 class _Magacin {
   final String tip;
   final String naziv;
-  final int brojArtikala;
+
+  // Ukupna vrijednost zaliha (zbir `value` svih stavki stanja).
+  final double vrijednost;
 
   const _Magacin({
     required this.tip,
     required this.naziv,
-    required this.brojArtikala,
+    required this.vrijednost,
   });
 }
 
@@ -205,13 +218,32 @@ class _PocetnaScreenState extends State<PocetnaScreen> {
     }
   }
 
-  // Broj artikala na stanju po skladištu (iz `meta.total`, jedan red).
+  // Ukupna vrijednost zaliha po skladištu.
   Future<List<_Magacin>> _ucitajMagacine(int firmaId) async {
     final skladista = await _kalkulacijeService.fetchWarehouses(firmaId);
-    return _brojeviMagacina(firmaId, skladista);
+    return _vrijednostiMagacina(firmaId, skladista);
   }
 
-  Future<List<_Magacin>> _brojeviMagacina(
+  // Sabira vrijednost svih stavki stanja na skladištu (sve stranice).
+  Future<double> _vrijednostSkladista(int firmaId, int skladisteId) async {
+    var suma = 0.0;
+    var stranica = 1;
+    var zadnja = 1;
+    do {
+      final s = await _stanjaService.fetchStocks(
+        firmaId,
+        warehouseId: skladisteId,
+        page: stranica,
+        perPage: 100,
+      );
+      suma += s.stanja.fold<double>(0, (z, st) => z + st.vrijednost);
+      zadnja = s.zadnjaStranica;
+      stranica++;
+    } while (stranica <= zadnja);
+    return suma;
+  }
+
+  Future<List<_Magacin>> _vrijednostiMagacina(
     int firmaId,
     List<Skladiste> skladista,
   ) {
@@ -222,20 +254,14 @@ class _PocetnaScreenState extends State<PocetnaScreen> {
           return _Magacin(
             tip: tip,
             naziv: nazivSkladista(tip, ''),
-            brojArtikala: 0,
+            vrijednost: 0,
           );
         }
-
-        final s = await _stanjaService.fetchStocks(
-          firmaId,
-          warehouseId: skladiste.id,
-          perPage: 1,
-        );
 
         return _Magacin(
           tip: tip,
           naziv: skladiste.naziv,
-          brojArtikala: s.ukupno,
+          vrijednost: await _vrijednostSkladista(firmaId, skladiste.id),
         );
       }),
     );
@@ -299,8 +325,15 @@ class _PocetnaScreenState extends State<PocetnaScreen> {
                           ],
                           const SizedBox(height: 28),
                           _naslovSekcije(
+                            'Poslovanje',
+                            'Prihod, rashod i dobit firme',
+                          ),
+                          const SizedBox(height: 14),
+                          _finansije(sirina),
+                          const SizedBox(height: 28),
+                          _naslovSekcije(
                             'Magacini',
-                            'Broj artikala na stanju po skladištu',
+                            'Ukupna vrijednost zaliha po skladištu',
                           ),
                           const SizedBox(height: 14),
                           _magaciniRed(sirina),
@@ -573,17 +606,17 @@ class _PocetnaScreenState extends State<PocetnaScreen> {
                 (t) => _Magacin(
                   tip: t,
                   naziv: nazivSkladista(t, ''),
-                  brojArtikala: 0,
+                  vrijednost: 0,
                 ),
               )
               .toList()
         : _magacini;
-    final ukupno = magacini.fold<int>(0, (s, m) => s + m.brojArtikala);
+    final ukupno = magacini.fold<double>(0, (s, m) => s + m.vrijednost);
 
     final jednaKolona = sirina < 760;
     Widget kartica(_Magacin m) => _KarticaMagacina(
       magacin: m,
-      udio: ukupno <= 0 ? 0 : m.brojArtikala / ukupno,
+      udio: ukupno <= 0 ? 0 : m.vrijednost / ukupno,
       dokumenti: _dokumentiMagacina(m.tip),
       ucitavanje: _ucitavanje && _magacini.isEmpty,
       onTap: () => _otvoriStanje(m.tip),
@@ -606,6 +639,58 @@ class _PocetnaScreenState extends State<PocetnaScreen> {
             )
           else
             kartica(m),
+      ],
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // Poslovanje: prihod, rashod, dobit
+  // -------------------------------------------------------------------------
+
+  // Server još nema podatke o prodaji (fakture, izlazni računi), pa se
+  // prihod, rashod i dobit ne mogu izračunati. Kad API to podrži, ovdje se
+  // postave iznosi i kartice ih same prikažu.
+  double? get _prihod => null;
+  double? get _rashod => null;
+  double? get _dobit =>
+      _prihod == null || _rashod == null ? null : _prihod! - _rashod!;
+
+  Widget _finansije(double sirina) {
+    const bezPodataka = 'Nema podataka o prodaji';
+    final dobit = _dobit;
+    final gubitak = dobit != null && dobit < 0;
+
+    return _mreza(
+      sirina: sirina,
+      kolone: sirina < 760 ? 1 : 3,
+      razmak: 16,
+      djeca: [
+        _KarticaFinansija(
+          naslov: 'Prihod',
+          ikona: Icons.trending_up_rounded,
+          boja: MagacinBoje.zelena,
+          vrijednost: _prihod,
+          napomena: _prihod == null ? bezPodataka : 'Ukupni prihodi',
+          ucitavanje: _ucitavanje && _magacini.isEmpty,
+        ),
+        _KarticaFinansija(
+          naslov: 'Rashod',
+          ikona: Icons.trending_down_rounded,
+          boja: MagacinBoje.crvena,
+          vrijednost: _rashod,
+          napomena: _rashod == null ? bezPodataka : 'Ukupni rashodi',
+          ucitavanje: _ucitavanje && _magacini.isEmpty,
+        ),
+        _KarticaFinansija(
+          naslov: gubitak ? 'Gubitak' : 'Dobit',
+          ikona: gubitak
+              ? Icons.money_off_rounded
+              : Icons.account_balance_wallet_rounded,
+          boja: gubitak ? MagacinBoje.crvena : _akcent,
+          vrijednost: dobit,
+          napomena: dobit == null ? bezPodataka : 'Prihod − rashod',
+          ucitavanje: _ucitavanje && _magacini.isEmpty,
+        ),
       ],
     );
   }
@@ -1120,7 +1205,7 @@ class _KarticaMagacinaState extends State<_KarticaMagacina> {
               ),
               const SizedBox(height: 20),
               Text(
-                'ARTIKALA NA STANJU',
+                'UKUPNA VRIJEDNOST',
                 style: TextStyle(
                   fontSize: 10.5,
                   letterSpacing: 0.9,
@@ -1135,7 +1220,7 @@ class _KarticaMagacinaState extends State<_KarticaMagacina> {
                       fit: BoxFit.scaleDown,
                       alignment: Alignment.centerLeft,
                       child: Text(
-                        '${m.brojArtikala}',
+                        _iznos(m.vrijednost),
                         style: const TextStyle(
                           fontSize: 24,
                           fontWeight: FontWeight.w800,
@@ -1176,7 +1261,7 @@ class _KarticaMagacinaState extends State<_KarticaMagacina> {
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    '${(widget.udio * 100).round()}% artikala',
+                    '${(widget.udio * 100).round()}% vrijednosti',
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w700,
@@ -1188,6 +1273,107 @@ class _KarticaMagacinaState extends State<_KarticaMagacina> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Kartica poslovanja (prihod / rashod / dobit)
+// ---------------------------------------------------------------------------
+
+class _KarticaFinansija extends StatelessWidget {
+  final String naslov;
+  final IconData ikona;
+  final Color boja;
+  final double? vrijednost;
+  final String napomena;
+  final bool ucitavanje;
+
+  const _KarticaFinansija({
+    required this.naslov,
+    required this.ikona,
+    required this.boja,
+    required this.vrijednost,
+    required this.napomena,
+    required this.ucitavanje,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: MagacinBoje.linija),
+        boxShadow: [
+          BoxShadow(
+            color: boja.withValues(alpha: 0.05),
+            blurRadius: 12,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: boja.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(ikona, color: boja, size: 24),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  naslov.toUpperCase(),
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    letterSpacing: 0.9,
+                    fontWeight: FontWeight.w700,
+                    color: boja,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                ucitavanje
+                    ? _Skeleton(
+                        sirina: 110,
+                        visina: 26,
+                        boja: boja.withValues(alpha: 0.12),
+                      )
+                    : FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          vrijednost == null ? '—' : _iznos(vrijednost!),
+                          style: const TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.w800,
+                            color: MagacinBoje.naslov,
+                            fontFeatures: [FontFeature.tabularFigures()],
+                          ),
+                        ),
+                      ),
+                const SizedBox(height: 2),
+                Text(
+                  napomena,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: MagacinBoje.priguseno,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -97,6 +97,9 @@ class PurchaseCalculationsService {
     String? trashed,
     String sort = 'date',
     String direction = 'desc',
+    int? perPage,
+    // Sa saStavkama lista vraća i stavke svake kalkulacije (include=items).
+    bool saStavkama = false,
   }) async {
     final pretraga = search?.trim() ?? '';
 
@@ -104,6 +107,8 @@ class PurchaseCalculationsService {
       _kalkulacije(companyId),
       query: {
         'page': '$page',
+        if (perPage != null) 'per_page': '$perPage',
+        if (saStavkama) 'include': 'items',
         'sort': sort,
         'direction': direction,
         if (pretraga.isNotEmpty) 'search': pretraga,

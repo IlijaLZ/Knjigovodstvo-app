@@ -12,6 +12,7 @@ import 'package:knjigovodstvo_app/models/partner.dart';
 import 'package:knjigovodstvo_app/models/purchase_calculation.dart';
 import 'package:knjigovodstvo_app/models/work_order.dart';
 import 'package:knjigovodstvo_app/screens/analiticka_kartica.dart';
+import 'package:knjigovodstvo_app/screens/dokumenta/kalkulacija_nabavnih_cijena/kopiraj_stavke_dialog.dart';
 import 'package:knjigovodstvo_app/stampa/kalkulacija_nabavnih_cijena_pdf.dart';
 import 'package:knjigovodstvo_app/stampa/pdf_zajednicko.dart';
 import 'package:knjigovodstvo_app/stampa/pregled_stampe.dart';
@@ -366,6 +367,90 @@ class _DodajKalkulacijuScreenState extends State<DodajKalkulacijuScreen> {
       }
       _preracunaj();
     });
+  }
+
+  // Stavke iz ranije kalkulacije (zadnje od istog dobavljača ili bilo koje),
+  // sa izmijenjenim količinama/cijenama. Dokument stavke je broj fakture
+  // ove kalkulacije, ne one iz koje se kopira.
+  Future<void> _kopirajStavke() async {
+    final firmaId = _firmaId;
+    if (firmaId == null) return;
+
+    final dobavljac = _dobavljaci
+        .where((d) => d.id == _dobavljacId)
+        .firstOrNull;
+    final tipSkladista = _skladista
+        .where((s) => s.id == _skladisteId)
+        .firstOrNull
+        ?.tip;
+
+    final rezultat = await showDialog<RezultatKopiranja>(
+      context: context,
+      barrierColor: const Color(0x800F172A),
+      builder: (context) => KopirajStavkeDialog(
+        firmaId: firmaId,
+        dobavljacId: dobavljac?.id,
+        dobavljacNaziv: dobavljac?.naziv,
+        trenutnaKalkulacijaId: _kalkulacijaId,
+        postojeciArtikli: stavke.map((s) => s.articleId).toSet(),
+        tipSkladista: tipSkladista,
+      ),
+    );
+    if (rezultat == null || !mounted) return;
+
+    final dokument = rcBrController.text.trim();
+    final izvor = rezultat.kalkulacija;
+    final r = izvor.rekapitulacija;
+
+    setState(() {
+      if (rezultat.kopirajTroskove) {
+        prevozController.text = r.prevoz == 0 ? '' : _format(r.prevoz);
+        spedicijaController.text = r.spedicija == 0 ? '' : _format(r.spedicija);
+        carinaController.text = r.carina == 0 ? '' : _format(r.carina);
+      }
+      if (rezultat.kopirajPotpise) {
+        if ((r.kalkulisao ?? '').trim().isNotEmpty) {
+          kalkulisaoController.text = r.kalkulisao!.trim();
+        }
+        if ((r.robuPrimio ?? '').trim().isNotEmpty) {
+          robuPrimioController.text = r.robuPrimio!.trim();
+        }
+      }
+      stavke.addAll(
+        rezultat.stavke.map(
+          (k) => _Stavka(
+            articleId: k.izvor.articleId,
+            sifra: k.izvor.sifra,
+            naziv: k.izvor.naziv,
+            jm: k.izvor.jm,
+            dokument: dokument,
+            kolicina: k.kolicina,
+            fakturnaCijena: k.fakturnaCijena,
+          ),
+        ),
+      );
+      // Nova kalkulacija bez dobavljača preuzima dobavljača izvora.
+      if (_dobavljacId == null &&
+          izvor.supplierId != null &&
+          _dobavljaci.any((d) => d.id == izvor.supplierId)) {
+        _dobavljacId = izvor.supplierId;
+      }
+      _greska = null;
+      _preracunaj();
+    });
+
+    final n = rezultat.stavke.length;
+    final dijelovi = [
+      if (n == 1) '1 stavka',
+      if (n > 1) '$n stavki',
+      if (rezultat.kopirajTroskove) 'zavisni troškovi',
+      if (rezultat.kopirajPotpise) 'potpisi',
+    ];
+    _poruka(
+      context,
+      'Kopirano iz kalkulacije (faktura ${izvor.brojFakture}): '
+      '${dijelovi.join(', ')}.',
+    );
   }
 
   // Kartica artikla na skladištu ove kalkulacije.
@@ -1433,6 +1518,13 @@ class _DodajKalkulacijuScreenState extends State<DodajKalkulacijuScreen> {
       onTap: _cuvanje ? null : () => _dodajIliIzmijeniArtikal(),
     );
 
+    final kopiraj = GlatkoDugme(
+      tekst: 'Kopiraj iz kalkulacije',
+      ikona: Icons.content_copy_rounded,
+      vrsta: VrstaDugmeta.sekundarno,
+      onTap: _cuvanje ? null : _kopirajStavke,
+    );
+
     Widget sadrzaj;
     if (stavke.isEmpty) {
       sadrzaj = Padding(
@@ -1472,7 +1564,15 @@ class _DodajKalkulacijuScreenState extends State<DodajKalkulacijuScreen> {
                 color: MagacinBoje.priguseno,
               ),
             ),
-            if (!_samoPregled) ...[const SizedBox(height: 16), dodaj],
+            if (!_samoPregled) ...[
+              const SizedBox(height: 16),
+              Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 10,
+                runSpacing: 10,
+                children: [dodaj, kopiraj],
+              ),
+            ],
           ],
         ),
       );
@@ -1509,11 +1609,13 @@ class _DodajKalkulacijuScreenState extends State<DodajKalkulacijuScreen> {
               padding: const EdgeInsets.fromLTRB(20, 14, 20, 14),
               child: LayoutBuilder(
                 builder: (context, c) {
-                  if (c.maxWidth >= 560) {
+                  if (c.maxWidth >= 760) {
                     return Row(
                       children: [
                         Expanded(child: pretraga),
                         if (!_samoPregled) ...[
+                          const SizedBox(width: 10),
+                          kopiraj,
                           const SizedBox(width: 10),
                           dodaj,
                         ],
@@ -1524,7 +1626,16 @@ class _DodajKalkulacijuScreenState extends State<DodajKalkulacijuScreen> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       pretraga,
-                      if (!_samoPregled) ...[const SizedBox(height: 10), dodaj],
+                      if (!_samoPregled) ...[
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            Expanded(child: kopiraj),
+                            const SizedBox(width: 10),
+                            Expanded(child: dodaj),
+                          ],
+                        ),
+                      ],
                     ],
                   );
                 },

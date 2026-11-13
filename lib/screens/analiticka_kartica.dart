@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:knjigovodstvo_app/controllers/firma_controller.dart';
 import 'package:knjigovodstvo_app/controllers/poslovne_godine_controller.dart';
+import 'package:knjigovodstvo_app/izvoz/dugme_izvoza.dart';
+import 'package:knjigovodstvo_app/izvoz/excel_izvoz.dart';
 import 'package:knjigovodstvo_app/models/auth_models.dart';
 import 'package:knjigovodstvo_app/models/stock_card.dart';
 import 'package:knjigovodstvo_app/services/articles_service.dart';
@@ -338,6 +340,17 @@ class _AnalitickaKarticaScreenState extends State<AnalitickaKarticaScreen> {
   // ---------------------------------------------------------------------------
 
   double get _ulazStranice => _promjene.fold(0, (s, p) => s + p.ulaz);
+
+  // Stanje (količina, vrijednost) prije prve promjene na stranici: na prvoj
+  // je to početno stanje, na ostalim prenos sa prethodne stranice.
+  (double, double) get _prenos => _pocetakStranice[_stranica] ?? (0, 0);
+
+  // Ulaz u zaglavlju uključuje početno stanje (prenos), kao i saldo, pa
+  // važi: ulaz − izlaz = saldo.
+  double get _ulazSaPrenosom => _prenos.$1 + _ulazStranice;
+
+  // Saldo nakon zadnje promjene na ovoj stranici (null dok se ne učita).
+  (double, double)? get _krajStranice => _pocetakStranice[_stranica + 1];
   double get _izlazStranice => _promjene.fold(0, (s, p) => s + p.izlaz);
 
   // Najnovija promjena na stranici (po datumu, pa po id-u): njen saldo je
@@ -1052,6 +1065,125 @@ class _AnalitickaKarticaScreenState extends State<AnalitickaKarticaScreen> {
     );
   }
 
+  // Sve promjene u izabranom periodu (sve stranice) sa početnim i završnim
+  // stanjem, kao na ekranu.
+  Future<List<ListExcel>> _pripremiExcel() async {
+    final firma = _firmaController.izabranaFirma.value;
+    if (firma == null) throw ApiException('Nije izabrana firma.');
+
+    final promjene = <PromjenaKartice>[];
+    StanjeKartice? pocetno;
+    StanjeKartice? zavrsno;
+    var stranica = 1;
+    var zadnja = 1;
+    do {
+      final r = await _service.fetchStockCard(
+        firma.id,
+        widget.articleId,
+        warehouseId: widget.warehouseId,
+        dateFrom: _datumOd,
+        dateTo: _datumDo,
+        page: stranica,
+        perPage: 200,
+      );
+      if (stranica == 1) pocetno = r.pocetnoStanje;
+      zavrsno = r.zavrsnoStanje;
+      promjene.addAll(r.promjene);
+      zadnja = r.zadnjaStranica;
+      stranica++;
+    } while (stranica <= zadnja);
+
+    final saSkladistem = widget.warehouseId == null;
+    double suma(double Function(PromjenaKartice) f) =>
+        promjene.fold(0, (s, p) => s + f(p));
+
+    List<Object?> redStanja(String naziv, StanjeKartice s) => [
+      s.datum,
+      naziv,
+      null,
+      if (saSkladistem) null,
+      null,
+      null,
+      s.prosjecnaCijena,
+      null,
+      null,
+      s.kolicina,
+      s.vrijednost,
+    ];
+
+    return [
+      ListExcel(
+        naziv: 'Kartica',
+        naslov: 'Analitička kartica: ${widget.naziv}',
+        podnaslovi: [
+          firma.name,
+          [
+            'Artikal ID ${widget.articleId}',
+            if (_jm.isNotEmpty) 'JM:$_jm',
+            widget.skladiste ?? 'Sva skladišta',
+            'Period: $_nazivPerioda',
+          ].join(' · '),
+        ],
+        kolone: [
+          const KolonaExcel('Datum', vrsta: VrstaKolone.datum, sirina: 12),
+          const KolonaExcel('Dokument', sirina: 26),
+          const KolonaExcel('Broj dok.', sirina: 14),
+          if (saSkladistem) const KolonaExcel('Skladište', sirina: 22),
+          const KolonaExcel('Ulaz', vrsta: VrstaKolone.broj, sirina: 11),
+          const KolonaExcel('Izlaz', vrsta: VrstaKolone.broj, sirina: 11),
+          const KolonaExcel('Cijena', vrsta: VrstaKolone.broj, sirina: 11),
+          const KolonaExcel(
+            'Vrij. ulaza',
+            vrsta: VrstaKolone.iznos,
+            sirina: 13,
+          ),
+          const KolonaExcel(
+            'Vrij. izlaza',
+            vrsta: VrstaKolone.iznos,
+            sirina: 13,
+          ),
+          const KolonaExcel('Saldo kol.', vrsta: VrstaKolone.broj, sirina: 12),
+          const KolonaExcel(
+            'Saldo vrij.',
+            vrsta: VrstaKolone.iznos,
+            sirina: 14,
+          ),
+        ],
+        redovi: [
+          if (pocetno != null) redStanja('Početno stanje', pocetno),
+          for (final p in promjene)
+            [
+              p.datum,
+              p.nazivDokumenta,
+              p.brojDokumenta,
+              if (saSkladistem) p.skladiste?.naziv,
+              p.ulaz == 0 ? null : p.ulaz,
+              p.izlaz == 0 ? null : p.izlaz,
+              p.cijena,
+              p.vrijednostUlaz == 0 ? null : p.vrijednostUlaz,
+              p.vrijednostIzlaz == 0 ? null : p.vrijednostIzlaz,
+              p.saldoKolicina,
+              p.saldoVrijednost,
+            ],
+          if (zavrsno != null) redStanja(_nazivZavrsnog(zavrsno), zavrsno),
+        ],
+        ukupno: [
+          'Ukupno promet',
+          '${promjene.length} promjena',
+          null,
+          if (saSkladistem) null,
+          suma((p) => p.ulaz),
+          suma((p) => p.izlaz),
+          null,
+          suma((p) => p.vrijednostUlaz),
+          suma((p) => p.vrijednostIzlaz),
+          null,
+          null,
+        ],
+      ),
+    ];
+  }
+
   Widget _alatnaTraka() {
     final tema = _tema;
     return Padding(
@@ -1098,6 +1230,14 @@ class _AnalitickaKarticaScreenState extends State<AnalitickaKarticaScreen> {
             const SizedBox(width: 10),
           ],
           _izborGodine(),
+          const SizedBox(width: 8),
+          DugmeIzvoza(
+            visina: 36,
+            nazivFajla: () => 'Kartica ${widget.naziv} $_nazivPerioda'
+                .replaceAll('.', '')
+                .replaceAll('–', '-'),
+            pripremi: _pripremiExcel,
+          ),
         ],
       ),
     );
@@ -1601,8 +1741,11 @@ class _AnalitickaKarticaScreenState extends State<AnalitickaKarticaScreen> {
             StatKartica(
               ikona: Icons.south_west_rounded,
               naslov: 'Ulaz',
-              vrijednost: '${_format4(_ulazStranice)}$_jm',
-              napomena: naStranici,
+              vrijednost: '${_format4(_ulazSaPrenosom)}$_jm',
+              napomena: _prenos.$1 == 0
+                  ? naStranici
+                  : 'uklj. ${_stranica == 1 ? 'početno stanje' : 'prenos'} '
+                        '${_format4(_prenos.$1)}',
             ),
             StatKartica(
               ikona: Icons.north_east_rounded,
@@ -1610,7 +1753,17 @@ class _AnalitickaKarticaScreenState extends State<AnalitickaKarticaScreen> {
               vrijednost: '${_format4(_izlazStranice)}$_jm',
               napomena: naStranici,
             ),
-            if (_zavrsno case final z?)
+            // Na stranici koja nije zadnja saldo je stanje na kraju te
+            // stranice, da bi se slagao sa ulazom i izlazom iznad.
+            if (_stranica < _zadnjaStranica && _krajStranice != null)
+              StatKartica(
+                ikona: Icons.inventory_rounded,
+                naslov: 'Saldo',
+                vrijednost: '${_format4(_krajStranice!.$1)}$_jm',
+                napomena: '${_format(_krajStranice!.$2)} € · kraj stranice',
+                upozorenje: _krajStranice!.$1 <= 0,
+              )
+            else if (_zavrsno case final z?)
               StatKartica(
                 ikona: Icons.inventory_rounded,
                 naslov: 'Saldo',

@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:knjigovodstvo_app/controllers/firma_controller.dart';
 import 'package:knjigovodstvo_app/controllers/poslovne_godine_controller.dart';
+import 'package:knjigovodstvo_app/izvoz/dugme_izvoza.dart';
+import 'package:knjigovodstvo_app/izvoz/excel_izvoz.dart';
 import 'package:knjigovodstvo_app/models/auth_models.dart';
 import 'package:knjigovodstvo_app/models/work_order.dart';
 import 'package:knjigovodstvo_app/routes/app_routes.dart';
@@ -898,6 +900,71 @@ class _RadniNalogScreenState extends State<RadniNalogScreen> {
     );
   }
 
+  // Svi nalozi uz trenutni filter i pretragu (sve stranice). Materijali se
+  // izvoze sa ekrana Trebovanje.
+  Future<List<ListExcel>> _pripremiExcel() async {
+    final firma = _firmaController.izabranaFirma.value;
+    if (firma == null) throw ApiException('Nije izabrana firma.');
+
+    final svi = <RadniNalog>[];
+    var stranica = 1;
+    var zadnja = 1;
+    do {
+      final r = await _service.fetchWorkOrders(
+        firma.id,
+        page: stranica,
+        search: _pretraga,
+        status: _status,
+        perPage: 100,
+      );
+      svi.addAll(r.nalozi);
+      zadnja = r.zadnjaStranica;
+      stranica++;
+    } while (stranica <= zadnja);
+
+    final nazivStatusa =
+        _statusi.where((s) => s.$2 == _status).firstOrNull?.$1 ?? 'Sve';
+
+    return [
+      ListExcel(
+        naziv: 'Radni nalozi',
+        naslov: 'Radni nalozi',
+        podnaslovi: [
+          firma.name,
+          [
+            'Status: $nazivStatusa',
+            if (_pretraga.isNotEmpty) 'Pretraga: $_pretraga',
+            'Izvezeno ${_formatDatum(DateTime.now())}',
+          ].join(' · '),
+        ],
+        kolone: const [
+          KolonaExcel('Datum', vrsta: VrstaKolone.datum, sirina: 12),
+          KolonaExcel('Broj naloga', sirina: 16),
+          KolonaExcel('Kupac', sirina: 28),
+          KolonaExcel('Status', sirina: 11),
+          KolonaExcel('Proizvoda', vrsta: VrstaKolone.broj, sirina: 11),
+          KolonaExcel('Izdat', vrsta: VrstaKolone.datum, sirina: 12),
+          KolonaExcel('Izdao', sirina: 20),
+          KolonaExcel('Potpisao', sirina: 20),
+        ],
+        redovi: [
+          for (final n in svi)
+            [
+              n.datum,
+              n.broj,
+              n.kupac,
+              n.jeIzdat ? 'Izdat' : 'Nacrt',
+              n.brojStavki,
+              n.izdatU,
+              n.izdao,
+              n.potpisao,
+            ],
+        ],
+        ukupno: ['Ukupno', '${svi.length} naloga'],
+      ),
+    ];
+  }
+
   Widget _zaglavlje() {
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -947,6 +1014,13 @@ class _RadniNalogScreenState extends State<RadniNalogScreen> {
           onTap: _imaFirmu ? () => _otvori() : null,
         );
 
+        final excel = DugmeIzvoza(
+          visina: 48,
+          nazivFajla: () => 'Radni nalozi ${_formatDatum(DateTime.now())}'
+              .replaceAll('.', '-'),
+          pripremi: _pripremiExcel,
+        );
+
         final kartice = KarticeFiltera(
           opcije: _statusi,
           izabrano: _status,
@@ -961,13 +1035,19 @@ class _RadniNalogScreenState extends State<RadniNalogScreen> {
                 children: [
                   Expanded(child: naslov),
                   const SizedBox(width: 20),
+                  if (_imaFirmu) ...[excel, const SizedBox(width: 10)],
                   novi,
                 ],
               )
             else ...[
               naslov,
               const SizedBox(height: 16),
-              novi,
+              Row(
+                children: [
+                  if (_imaFirmu) ...[excel, const SizedBox(width: 10)],
+                  Expanded(child: novi),
+                ],
+              ),
             ],
             SizedBox(height: malo ? 18 : 24),
             Container(

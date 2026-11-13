@@ -174,6 +174,10 @@ class _DodajRadniNalogState extends State<DodajRadniNalog> {
   bool _cuvanje = false;
   ApiException? _greska;
 
+  // Upozorenja pri učitavanju naloga (otpale ručne izmjene, obrisan
+  // proizvod); korisnik ih može zatvoriti.
+  List<String> _upozorenja = [];
+
   // Da li je nešto snimljeno, da lista zna da se osvježi.
   bool _promijenjeno = false;
 
@@ -225,8 +229,8 @@ class _DodajRadniNalogState extends State<DodajRadniNalog> {
       final nalog = _nalogId == null
           ? null
           : await _service.fetchWorkOrder(firmaId, _nalogId!);
-      final noveStavke = nalog == null
-          ? <_StavkaArtikla>[]
+      final (noveStavke, upozorenja) = nalog == null
+          ? (<_StavkaArtikla>[], <String>[])
           : await _stavkeIz(firmaId, nalog);
 
       final listaKupaca = await kupci;
@@ -239,6 +243,7 @@ class _DodajRadniNalogState extends State<DodajRadniNalog> {
 
       setState(() {
         _kupci = listaKupaca;
+        _upozorenja = upozorenja;
         if (nalog != null) _postaviNalog(nalog, noveStavke);
       });
     } on ApiException catch (e) {
@@ -275,10 +280,16 @@ class _DodajRadniNalogState extends State<DodajRadniNalog> {
   }
 
   // Stavke naloga iz trebovanja. Artikli se učitavaju zbog cijena i aktuelnog
-  // normativa; ako artikal više ne postoji, normativ se gradi iz trebovanja.
-  Future<List<_StavkaArtikla>> _stavkeIz(int firmaId, RadniNalog nalog) async {
+  // normativa; ako artikal više ne postoji (404), normativ se gradi iz
+  // trebovanja. Uz stavke vraća upozorenja za korisnika (ručne izmjene koje
+  // su otpale, nepoznate cijene).
+  Future<(List<_StavkaArtikla>, List<String>)> _stavkeIz(
+    int firmaId,
+    RadniNalog nalog,
+  ) async {
     final stavkeTrebovanja = nalog.trebovanje?.stavke ?? const [];
     final izdat = nalog.jeIzdat;
+    final upozorenja = <String>[];
 
     final artikli = await Future.wait(
       stavkeTrebovanja.map((s) async {
@@ -286,13 +297,47 @@ class _DodajRadniNalogState extends State<DodajRadniNalog> {
         if (izdat) return null;
         try {
           return await _articlesService.fetchArticle(firmaId, s.articleId);
-        } on ApiException {
-          return null;
+        } on ApiException catch (e) {
+          // Samo obrisan artikal ide na normativ iz trebovanja. Greška mreže
+          // ili servera prekida učitavanje (uz "Pokušaj ponovo"), inače bi
+          // materijali bili prikazani sa cijenom 0.
+          if (e.statusCode == 404) return null;
+          rethrow;
         }
       }),
     );
 
-    return List.generate(stavkeTrebovanja.length, (i) {
+    for (var i = 0; i < stavkeTrebovanja.length; i++) {
+      final s = stavkeTrebovanja[i];
+      final artikal = artikli[i];
+      if (izdat) continue;
+
+      if (artikal == null) {
+        upozorenja.add(
+          'Proizvod ${s.naziv} više ne postoji u šifarniku. Prikazan je '
+          'normativ iz naloga, ali cijene materijala nisu poznate, pa '
+          'vrijednost i cijena koštanja nisu tačne.',
+        );
+        continue;
+      }
+
+      // U nalogu u pripremi `izdato` postoji samo za ručne izmjene. Ako je
+      // sirovina u međuvremenu izbačena iz normativa, izmjena otpada.
+      final uNormativu = artikal.normativi
+          .where((n) => n.id != null)
+          .map((n) => n.id)
+          .toSet();
+      for (final m in s.materijali) {
+        if (m.izdato == null || uNormativu.contains(m.bomItemId)) continue;
+        upozorenja.add(
+          '${s.naziv}: sirovina ${m.naziv} više nije u normativu, pa je '
+          'ručno upisana količina (${_formatKolicina(m.izdato!)} ${m.jm}) '
+          'uklonjena. Promjena se snima kad sačuvate nalog.',
+        );
+      }
+    }
+
+    final stavke = List.generate(stavkeTrebovanja.length, (i) {
       final s = stavkeTrebovanja[i];
       final artikal =
           artikli[i] ??
@@ -332,6 +377,8 @@ class _DodajRadniNalogState extends State<DodajRadniNalog> {
         },
       );
     });
+
+    return (stavke, upozorenja);
   }
 
   Future<void> _izaberiDatum() async {
@@ -488,9 +535,12 @@ class _DodajRadniNalogState extends State<DodajRadniNalog> {
 
     try {
       final izdat = await _service.issueWorkOrder(_firmaId!, nalog.id);
-      final noveStavke = await _stavkeIz(_firmaId!, izdat);
+      final (noveStavke, upozorenja) = await _stavkeIz(_firmaId!, izdat);
       if (!mounted) return;
-      setState(() => _postaviNalog(izdat, noveStavke));
+      setState(() {
+        _upozorenja = upozorenja;
+        _postaviNalog(izdat, noveStavke);
+      });
       _poruka(context, 'Radni nalog ${izdat.broj} je izdat.');
     } on ApiException catch (e) {
       // Nalog je sačuvan, ali nije izdat (npr. nema dovoljno zalihe).
@@ -1739,6 +1789,62 @@ class _DodajRadniNalogState extends State<DodajRadniNalog> {
     );
   }
 
+  Widget _buildUpozorenja() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(14, 10, 6, 10),
+      decoration: BoxDecoration(
+        color: MagacinBoje.narandzastaSvijetlo,
+        border: Border.all(color: hoverNijansa(MagacinBoje.narandzasta, 0.3)),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (final poruka in _upozorenja)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(
+                          Icons.warning_amber_rounded,
+                          color: MagacinBoje.narandzasta,
+                          size: 18,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            poruka,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: MagacinBoje.tekst,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Zatvori',
+            visualDensity: VisualDensity.compact,
+            onPressed: () => setState(() => _upozorenja = []),
+            icon: const Icon(Icons.close_rounded, size: 18),
+            color: MagacinBoje.priguseno,
+          ),
+        ],
+      ),
+    );
+  }
+
   // Greške servera koje nisu vezane za polje forme (stavke, zaliha...).
   Widget? _buildGreske() {
     final greska = _greska;
@@ -2073,6 +2179,10 @@ class _DodajRadniNalogState extends State<DodajRadniNalog> {
           const SizedBox(height: 20),
         ],
         if (greske != null) ...[greske, const SizedBox(height: 20)],
+        if (_upozorenja.isNotEmpty) ...[
+          _buildUpozorenja(),
+          const SizedBox(height: 20),
+        ],
         if (dvijeKolone)
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,

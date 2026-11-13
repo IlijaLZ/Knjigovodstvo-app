@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 import '../../controllers/firma_controller.dart';
+import '../../izvoz/dugme_izvoza.dart';
+import '../../izvoz/excel_izvoz.dart';
 import '../../models/auth_models.dart';
 import '../../models/partner.dart';
 import '../../services/partners_service.dart';
@@ -1055,6 +1057,65 @@ class _PartneriScreenState extends State<PartneriScreen> {
     );
   }
 
+  // Svi aktivni partneri ove vrste uz trenutnu pretragu (sve stranice).
+  Future<List<ListExcel>> _pripremiExcel() async {
+    final firma = _firmaController.izabranaFirma.value;
+    if (firma == null) throw ApiException('Nije izabrana firma.');
+
+    final svi = <Partner>[];
+    var stranica = 1;
+    var zadnja = 1;
+    do {
+      final r = await _service.fetchPartners(
+        firma.id,
+        _vrsta,
+        page: stranica,
+        search: _pretraga,
+        perPage: 100,
+      );
+      svi.addAll(r.partneri.where((p) => p.obrisan == null));
+      zadnja = r.zadnjaStranica;
+      stranica++;
+    } while (stranica <= zadnja);
+
+    return [
+      ListExcel(
+        naziv: _vrsta.mnozina,
+        naslov: _vrsta.mnozina,
+        podnaslovi: [
+          firma.name,
+          [
+            '${svi.length} ukupno',
+            if (_pretraga.isNotEmpty) 'Pretraga: $_pretraga',
+          ].join(' · '),
+        ],
+        kolone: const [
+          KolonaExcel('ID', vrsta: VrstaKolone.broj, sirina: 8),
+          KolonaExcel('Naziv', sirina: 34),
+          KolonaExcel('PIB', sirina: 16),
+          KolonaExcel('PDV broj', sirina: 16),
+          KolonaExcel('Adresa', sirina: 30),
+          KolonaExcel('Grad', sirina: 16),
+          KolonaExcel('Telefon', sirina: 16),
+          KolonaExcel('Email', sirina: 28),
+        ],
+        redovi: [
+          for (final p in svi)
+            [
+              p.id,
+              p.naziv,
+              p.pib,
+              p.pdvBroj,
+              p.adresa,
+              p.grad,
+              p.telefon,
+              p.email,
+            ],
+        ],
+      ),
+    ];
+  }
+
   Widget _zaglavlje() {
     final tema = _tema;
     final saPdv = partneri.where((p) => !_prazno(p.pdvBroj)).length;
@@ -1078,6 +1139,12 @@ class _PartneriScreenState extends State<PartneriScreen> {
           onTap: _imaFirmu ? _dodaj : null,
         );
 
+        final excel = DugmeIzvoza(
+          visina: 48,
+          nazivFajla: () => _vrsta.mnozina,
+          pripremi: _pripremiExcel,
+        );
+
         final Widget vrh;
         if (w >= 1000) {
           vrh = Row(
@@ -1087,6 +1154,7 @@ class _PartneriScreenState extends State<PartneriScreen> {
               const SizedBox(width: 24),
               SizedBox(width: 320, child: _pretrazivac()),
               const SizedBox(width: 10),
+              if (_imaFirmu) ...[excel, const SizedBox(width: 10)],
               dodaj,
             ],
           );
@@ -1101,13 +1169,19 @@ class _PartneriScreenState extends State<PartneriScreen> {
                   children: [
                     Expanded(child: _pretrazivac()),
                     const SizedBox(width: 10),
+                    if (_imaFirmu) ...[excel, const SizedBox(width: 10)],
                     dodaj,
                   ],
                 )
               else ...[
                 _pretrazivac(),
                 const SizedBox(height: 10),
-                dodaj,
+                Row(
+                  children: [
+                    if (_imaFirmu) ...[excel, const SizedBox(width: 10)],
+                    Expanded(child: dodaj),
+                  ],
+                ),
               ],
             ],
           );

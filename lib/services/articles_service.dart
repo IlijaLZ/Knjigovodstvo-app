@@ -48,12 +48,15 @@ class ArticlesService {
     String? search,
     String? trashed,
     int? perPage,
+    // Gotovi proizvodi sa aktivnim stavkama normativa (include=bom_items).
+    bool saNormativima = false,
   }) async {
     final pretraga = search?.trim() ?? '';
 
     final body = await _client.get(
       '/companies/$companyId/articles',
       query: {
+        if (saNormativima) 'include': 'bom_items',
         'type': type,
         'sort': 'code',
         'page': '$page',
